@@ -1,0 +1,15 @@
+# Query 10: Count observations per cube version
+# This helps estimate deletion impact
+
+PREFIX cube: <https://cube.link/>
+
+SELECT ?cube (COUNT(?obs) AS ?observationCount)
+WHERE {
+  GRAPH <https://lindas.admin.ch/sfoe/cube> {
+    ?cube a cube:Cube .
+    ?cube cube:observationSet ?set .
+    ?set cube:observation ?obs .
+  }
+}
+GROUP BY ?cube
+ORDER BY DESC(?observationCount)
