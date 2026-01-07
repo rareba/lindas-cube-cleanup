@@ -1,5 +1,10 @@
-# Downloaded data
-data/
+# Downloaded data (large files)
+data/*.nt
+data/cubes/
+data/sfoe-cube*
+
+# Keep test results
+!data/test-results/
 
 # Fuseki installation
 fuseki/
