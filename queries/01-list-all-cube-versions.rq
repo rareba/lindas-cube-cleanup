@@ -1,0 +1,38 @@
+# Query 1: List all cube versions in the SFOE graph
+# This query finds all cubes and identifies their base URI and version number
+# Purpose: Discovery - understand what cubes exist and their version structure
+
+PREFIX cube: <https://cube.link/>
+PREFIX schema: <http://schema.org/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT DISTINCT
+  ?baseCube
+  ?cube
+  ?version
+  ?dateCreated
+  ?dateModified
+  ?title
+WHERE {
+  GRAPH <https://lindas.admin.ch/sfoe/cube> {
+    ?cube a cube:Cube .
+
+    # Try to get creation/modification dates
+    OPTIONAL { ?cube schema:dateCreated ?dateCreated }
+    OPTIONAL { ?cube schema:dateModified ?dateModified }
+    OPTIONAL { ?cube dcterms:created ?dcCreated }
+    OPTIONAL { ?cube dcterms:modified ?dcModified }
+    OPTIONAL { ?cube schema:name ?title }
+    OPTIONAL { ?cube dcterms:title ?dcTitle }
+
+    # Extract version number from URI (assumes pattern like .../cubename/version)
+    BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?versionStr)
+    BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?versionStr), 0) AS ?version)
+
+    # Extract base cube URI (without version number)
+    BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?baseCubeStr)
+    BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), IRI(?baseCubeStr), ?cube) AS ?baseCube)
+  }
+}
+ORDER BY ?baseCube DESC(?version)

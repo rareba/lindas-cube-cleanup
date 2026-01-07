@@ -1,0 +1,70 @@
+# Query 4: PREVIEW - Count triples that would be deleted per cube version
+# This is a SELECT query that shows what DELETE would affect
+# Run this BEFORE the actual delete to verify
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?cubeToDelete ?rank
+  (COUNT(DISTINCT ?metaTriple) AS ?metaTriples)
+  (COUNT(DISTINCT ?shapeTriple) AS ?shapeTriples)
+  (COUNT(DISTINCT ?observationTriple) AS ?observationTriples)
+WHERE {
+  # Subquery to find cubes to delete (rank > 2)
+  {
+    SELECT ?cubeToDelete ?rank
+    WHERE {
+      {
+        SELECT ?cube ?baseCube ?version (COUNT(DISTINCT ?newerCube) + 1 AS ?rank)
+        WHERE {
+          GRAPH <https://lindas.admin.ch/sfoe/cube> {
+            ?cube a cube:Cube .
+            BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?versionStr)
+            BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?versionStr), 0) AS ?version)
+            BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?baseCubeStr)
+            BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), IRI(?baseCubeStr), ?cube) AS ?baseCube)
+
+            OPTIONAL {
+              ?newerCube a cube:Cube .
+              BIND(REPLACE(STR(?newerCube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?newerVersionStr)
+              BIND(IF(REGEX(STR(?newerCube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?newerVersionStr), 0) AS ?newerVersion)
+              BIND(REPLACE(STR(?newerCube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?newerBaseCubeStr)
+              BIND(IF(REGEX(STR(?newerCube), "^.*/[^/]+/[0-9]+$"), IRI(?newerBaseCubeStr), ?newerCube) AS ?newerBaseCube)
+              FILTER(?newerBaseCube = ?baseCube && ?newerVersion > ?version)
+            }
+          }
+        }
+        GROUP BY ?cube ?baseCube ?version
+      }
+      FILTER(?rank > 2)
+      BIND(?cube AS ?cubeToDelete)
+    }
+  }
+
+  GRAPH <https://lindas.admin.ch/sfoe/cube> {
+    # Count metadata triples
+    OPTIONAL {
+      ?cubeToDelete ?p1 ?metaLevel1 .
+      BIND(CONCAT(STR(?cubeToDelete), STR(?p1), STR(?metaLevel1)) AS ?metaTriple)
+    }
+
+    # Count shape triples
+    OPTIONAL {
+      ?cubeToDelete cube:observationConstraint ?shape .
+      ?shape ?shapeP ?shapeO .
+      BIND(CONCAT(STR(?shape), STR(?shapeP), STR(?shapeO)) AS ?shapeTriple)
+    }
+
+    # Count observation triples
+    OPTIONAL {
+      ?cubeToDelete cube:observationSet ?set .
+      ?set cube:observation ?obs .
+      ?obs ?obsP ?obsO .
+      BIND(CONCAT(STR(?obs), STR(?obsP), STR(?obsO)) AS ?observationTriple)
+    }
+  }
+}
+GROUP BY ?cubeToDelete ?rank
+ORDER BY ?cubeToDelete

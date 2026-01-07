@@ -1,0 +1,17 @@
+# Query 8: DELETE observation links from observation set
+# Run this AFTER deleting observation data (query 07)
+# Replace CUBE_URI_HERE with the actual cube URI
+
+PREFIX cube: <https://cube.link/>
+
+WITH <https://lindas.admin.ch/sfoe/cube>
+DELETE {
+  ?set cube:observation ?observationS .
+}
+WHERE {
+  BIND(<CUBE_URI_HERE> AS ?cube)
+
+  ?cube cube:observationSet ?set .
+  ?set cube:observation ?observationS .
+}
+LIMIT 100000

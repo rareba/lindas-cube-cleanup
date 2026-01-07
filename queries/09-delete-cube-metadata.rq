@@ -1,0 +1,51 @@
+# Query 9: DELETE cube metadata and shapes
+# Run this AFTER deleting all observations
+# This removes the cube structure, shapes, and metadata
+# Replace CUBE_URI_HERE with the actual cube URI
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+WITH <https://lindas.admin.ch/sfoe/cube>
+DELETE {
+  ?cube a cube:Cube ;
+        cube:observationConstraint ?shape ;
+        cube:observationSet ?set ;
+        ?p1 ?metaLevel1 .
+
+  ?metaLevel1 ?p2 ?metaLevel2 .
+
+  ?shape ?shapeP ?shapeO .
+  ?propertyS ?propertyP ?propertyO .
+
+  ?set ?setP ?setO .
+}
+WHERE {
+  BIND(<CUBE_URI_HERE> AS ?cube)
+  ?cube rdf:type cube:Cube
+
+  {
+    ?cube ?p1 ?metaLevel1
+    OPTIONAL {
+      ?metaLevel1 ?p2 ?metaLevel2
+      FILTER(isBlank(?metaLevel1))
+    }
+  }
+  UNION
+  {
+    ?cube cube:observationConstraint ?shape .
+    ?shape ?shapeP ?shapeO
+  }
+  UNION
+  {
+    ?cube cube:observationConstraint/sh:property ?property .
+    ?property (<>|!<>)* ?propertyS .
+    ?propertyS ?propertyP ?propertyO
+  }
+  UNION
+  {
+    ?cube cube:observationSet ?set .
+    ?set ?setP ?setO .
+  }
+}

@@ -1,0 +1,20 @@
+# Query 7: DELETE observations in chunks (for large cubes)
+# Most triples are in observations - delete these first in batches
+# Replace CUBE_URI_HERE with the actual cube URI
+# Run multiple times until no more observations exist
+# Use LIMIT to control chunk size (adjust based on server capacity)
+
+PREFIX cube: <https://cube.link/>
+
+WITH <https://lindas.admin.ch/sfoe/cube>
+DELETE {
+  ?observationS ?observationP ?observationO .
+}
+WHERE {
+  BIND(<CUBE_URI_HERE> AS ?cube)
+
+  ?cube cube:observationSet ?set .
+  ?set cube:observation ?observationS .
+  ?observationS ?observationP ?observationO .
+}
+LIMIT 100000

@@ -1,0 +1,66 @@
+# Query 5: PREVIEW - Show all triples for a SINGLE cube (parameterized)
+# Replace CUBE_URI_HERE with the actual cube URI you want to inspect
+# This helps verify what will be deleted for a specific cube
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?subject ?predicate ?object ?category
+WHERE {
+  GRAPH <https://lindas.admin.ch/sfoe/cube> {
+    # Set the cube URI to inspect here
+    BIND(<CUBE_URI_HERE> AS ?cube)
+
+    {
+      # Cube's direct metadata
+      ?cube ?predicate ?object .
+      BIND(?cube AS ?subject)
+      BIND("metadata-direct" AS ?category)
+    }
+    UNION
+    {
+      # Second level metadata (blank nodes)
+      ?cube ?p1 ?metaLevel1 .
+      ?metaLevel1 ?predicate ?object .
+      FILTER(isBlank(?metaLevel1))
+      BIND(?metaLevel1 AS ?subject)
+      BIND("metadata-blank" AS ?category)
+    }
+    UNION
+    {
+      # Constraint Shape
+      ?cube cube:observationConstraint ?shape .
+      ?shape ?predicate ?object .
+      BIND(?shape AS ?subject)
+      BIND("shape" AS ?category)
+    }
+    UNION
+    {
+      # Property Shapes (deep traversal)
+      ?cube cube:observationConstraint/sh:property ?property .
+      ?property (<>|!<>)* ?subject .
+      ?subject ?predicate ?object .
+      BIND("property-shape" AS ?category)
+    }
+    UNION
+    {
+      # Observations
+      ?cube cube:observationSet ?set .
+      ?set cube:observation ?obs .
+      ?obs ?predicate ?object .
+      BIND(?obs AS ?subject)
+      BIND("observation" AS ?category)
+    }
+    UNION
+    {
+      # Observation Set itself
+      ?cube cube:observationSet ?set .
+      ?set ?predicate ?object .
+      BIND(?set AS ?subject)
+      BIND("observation-set" AS ?category)
+    }
+  }
+}
+ORDER BY ?category ?subject ?predicate
+LIMIT 1000

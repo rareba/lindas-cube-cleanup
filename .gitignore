@@ -1,0 +1,18 @@
+# Downloaded data
+data/
+
+# Fuseki installation
+fuseki/
+
+# Temporary files
+*.tmp
+*.log
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp

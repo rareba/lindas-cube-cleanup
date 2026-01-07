@@ -1,0 +1,43 @@
+# Query 3: Identify cube versions to DELETE (all except newest 2)
+# This query shows which versions would be deleted
+# Uses a subquery to rank versions and select those beyond rank 2
+
+PREFIX cube: <https://cube.link/>
+PREFIX schema: <http://schema.org/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?cube ?baseCube ?version ?rank
+WHERE {
+  {
+    SELECT ?cube ?baseCube ?version (COUNT(DISTINCT ?newerCube) + 1 AS ?rank)
+    WHERE {
+      GRAPH <https://lindas.admin.ch/sfoe/cube> {
+        ?cube a cube:Cube .
+
+        # Extract version from current cube
+        BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?versionStr)
+        BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?versionStr), 0) AS ?version)
+
+        # Extract base cube URI
+        BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?baseCubeStr)
+        BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), IRI(?baseCubeStr), ?cube) AS ?baseCube)
+
+        # Find cubes with same base but higher version number
+        OPTIONAL {
+          ?newerCube a cube:Cube .
+          BIND(REPLACE(STR(?newerCube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?newerVersionStr)
+          BIND(IF(REGEX(STR(?newerCube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?newerVersionStr), 0) AS ?newerVersion)
+          BIND(REPLACE(STR(?newerCube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?newerBaseCubeStr)
+          BIND(IF(REGEX(STR(?newerCube), "^.*/[^/]+/[0-9]+$"), IRI(?newerBaseCubeStr), ?newerCube) AS ?newerBaseCube)
+
+          FILTER(?newerBaseCube = ?baseCube && ?newerVersion > ?version)
+        }
+      }
+    }
+    GROUP BY ?cube ?baseCube ?version
+  }
+  # Only show versions ranked 3 or higher (to be deleted)
+  FILTER(?rank > 2)
+}
+ORDER BY ?baseCube ?rank
