@@ -262,12 +262,11 @@ async function loadLindasGraphs() {
         if (result.results && result.results.bindings) {
             result.results.bindings.forEach(binding => {
                 const graphUri = binding.graph.value;
-                const tripleCount = binding.tripleCount ? parseInt(binding.tripleCount.value).toLocaleString() : '?';
                 const option = document.createElement('option');
                 option.value = graphUri;
                 // Shorten display for readability
                 const shortUri = graphUri.replace('https://lindas.admin.ch/', '');
-                option.textContent = `${shortUri} (${tripleCount} triples)`;
+                option.textContent = shortUri;
                 option.title = graphUri; // Full URI on hover
                 graphSelect.appendChild(option);
             });

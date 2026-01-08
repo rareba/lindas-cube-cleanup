@@ -175,17 +175,18 @@ app.post('/api/lindas/graphs', async (req, res) => {
     }
 });
 
-// List all graphs from LINDAS (no search filter)
+// List all graphs from LINDAS that contain cubes (much faster than listing all graphs)
 app.post('/api/lindas/all-graphs', async (req, res) => {
     try {
+        // Only list graphs that contain cube:Cube - this is much faster
         const query = `
-            SELECT DISTINCT ?graph (COUNT(*) as ?tripleCount)
+            PREFIX cube: <https://cube.link/>
+            SELECT DISTINCT ?graph
             WHERE {
-                GRAPH ?graph { ?s ?p ?o }
+                GRAPH ?graph { ?s a cube:Cube }
             }
-            GROUP BY ?graph
             ORDER BY ?graph
-            LIMIT 500
+            LIMIT 200
         `;
 
         const result = await executeSparqlSelect(LINDAS_ENDPOINT, query);
