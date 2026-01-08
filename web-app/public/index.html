@@ -625,54 +625,114 @@ WHERE {
             <div class="card">
                 <h2>Query Editor Templates</h2>
                 <div class="doc-section">
-                    <p>The Query Editor provides pre-built SPARQL templates for common operations. Select a template from the dropdown to auto-populate the query.</p>
+                    <p>The Query Editor provides pre-built SPARQL templates for common operations. Below is a detailed explanation of the logic behind each template.</p>
 
-                    <h3>Read Queries (Safe to Run)</h3>
-                    <table class="doc-table">
-                        <tr><th>Template</th><th>Purpose</th><th>When to Use</th></tr>
-                        <tr>
-                            <td><strong>List All Cubes</strong></td>
-                            <td>Shows all cubes with version numbers, grouped by base cube</td>
-                            <td>Initial exploration - see what data exists in your graph</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Count Total Triples</strong></td>
-                            <td>Returns the total number of triples in the graph</td>
-                            <td>Before/after deletion to verify data was removed</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Preview Single Cube</strong></td>
-                            <td>Counts shapes, properties, and observations for one cube</td>
-                            <td>Before deleting - verify you have the right cube</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Preview Versions to Delete</strong></td>
-                            <td>Shows all versions ranked with KEEP/DELETE status</td>
-                            <td>Core cleanup preview - see exactly what will be deleted</td>
-                        </tr>
-                    </table>
+                    <h3>1. List All Cubes</h3>
+                    <p><strong>Purpose:</strong> Shows all cubes with version numbers, grouped by base cube.</p>
+                    <p><strong>Query Logic:</strong></p>
+                    <ul class="doc-list">
+                        <li>Finds all resources with <code>rdf:type cube:Cube</code></li>
+                        <li>Extracts version number from URI using regex: <code>REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")</code></li>
+                        <li>Extracts base cube URI by removing the version suffix</li>
+                        <li>Retrieves optional metadata (title, dateCreated)</li>
+                    </ul>
+                    <pre class="code-block sparql"># Version extraction example:
+# Input:  https://energy.ld.admin.ch/sfoe/cube_name/7
+# Output: version = 7, baseCube = https://energy.ld.admin.ch/sfoe/cube_name</pre>
 
-                    <h3>Write Queries (Destructive - Use with Caution)</h3>
-                    <table class="doc-table">
-                        <tr><th>Template</th><th>Purpose</th><th>Warning</th></tr>
-                        <tr class="delete-row">
-                            <td><strong>Delete Single Cube</strong></td>
-                            <td>Deletes one specific cube version by URI</td>
-                            <td>Permanently removes all data for that cube version</td>
-                        </tr>
-                        <tr class="delete-row">
-                            <td><strong>Delete All Old Versions</strong></td>
-                            <td>Deletes all cube versions marked DELETE (rank > 2)</td>
-                            <td>Batch operation - review preview first!</td>
-                        </tr>
-                    </table>
+                    <h3>2. Count Total Triples</h3>
+                    <p><strong>Purpose:</strong> Returns the total number of triples in the graph.</p>
+                    <p><strong>Query Logic:</strong></p>
+                    <ul class="doc-list">
+                        <li>Simple COUNT(*) aggregation over all triples in the named graph</li>
+                        <li>Use before/after deletion to verify how many triples were removed</li>
+                    </ul>
+                    <pre class="code-block sparql">SELECT (COUNT(*) AS ?tripleCount)
+WHERE { GRAPH &lt;graphUri&gt; { ?s ?p ?o } }</pre>
+
+                    <h3>3. Preview Single Cube (Count Components)</h3>
+                    <p><strong>Purpose:</strong> Counts the components of a specific cube before deletion.</p>
+                    <p><strong>Query Logic:</strong></p>
+                    <ul class="doc-list">
+                        <li>Counts SHACL shapes via <code>cube:observationConstraint</code></li>
+                        <li>Counts shape properties via <code>sh:property</code> path</li>
+                        <li>Counts observation sets via <code>cube:observationSet</code></li>
+                        <li>Counts individual observations via <code>cube:observation</code></li>
+                    </ul>
+                    <pre class="code-block sparql"># Component paths:
+?cube cube:observationConstraint ?shape        # SHACL shape
+?cube cube:observationConstraint/sh:property   # Properties
+?cube cube:observationSet ?obsSet              # Observation container
+?cube cube:observationSet/cube:observation     # Data points</pre>
+
+                    <h3>4. Preview Versions to Delete (Keep Newest 2)</h3>
+                    <p><strong>Purpose:</strong> Shows all versions ranked, marking which will be KEPT or DELETED.</p>
+                    <p><strong>Query Logic:</strong></p>
+                    <ul class="doc-list">
+                        <li>For each cube, count how many versions have a HIGHER version number</li>
+                        <li>Rank = count of newer versions + 1 (so newest = rank 1)</li>
+                        <li>Rank 1-2 = KEEP, Rank 3+ = DELETE</li>
+                    </ul>
+                    <pre class="code-block sparql"># Ranking subquery logic:
+SELECT ?cube (COUNT(?newerCube) + 1 AS ?rank)
+WHERE {
+  ?cube a cube:Cube .
+  OPTIONAL {
+    ?newerCube a cube:Cube .
+    FILTER(sameBaseCube && newerVersion > thisVersion)
+  }
+}
+GROUP BY ?cube
+
+# Result: IF(?rank <= 2, "KEEP", "DELETE")</pre>
+
+                    <h3>5. Delete Single Cube Version</h3>
+                    <p><strong>Purpose:</strong> Completely removes one cube version and all its data.</p>
+                    <p><strong>Query Logic:</strong></p>
+                    <ul class="doc-list">
+                        <li>Uses UNION pattern to match all cube components</li>
+                        <li>Deletes cube metadata and blank node properties</li>
+                        <li>Deletes SHACL shapes and property definitions</li>
+                        <li>Deletes observation set container</li>
+                        <li>Deletes all individual observations</li>
+                    </ul>
+                    <pre class="code-block sparql"># Delete pattern structure:
+DELETE { ... all matched triples ... }
+WHERE {
+  { ?cube ?p ?metadata }           # Cube metadata
+  UNION
+  { ?cube cube:observationConstraint ?shape. ?shape ?p ?o }  # Shapes
+  UNION
+  { ?cube cube:observationSet ?set. ?set ?p ?o }            # Obs set
+  UNION
+  { ?set cube:observation ?obs. ?obs ?p ?o }                # Observations
+}</pre>
+
+                    <h3>6. Delete All Old Versions (Keep Newest 2)</h3>
+                    <p><strong>Purpose:</strong> Batch deletes all versions marked DELETE from the preview query.</p>
+                    <p><strong>Query Logic:</strong></p>
+                    <ul class="doc-list">
+                        <li>Combines ranking logic with deletion pattern</li>
+                        <li>Only targets cubes where rank > 2 (older than newest 2)</li>
+                        <li>Deletes all components for each matched cube</li>
+                        <li><strong>Warning:</strong> This is a powerful batch operation - always run the preview first!</li>
+                    </ul>
+                    <pre class="code-block sparql"># Combined logic:
+DELETE { ... cube components ... }
+WHERE {
+  # Subquery identifies cubes with rank > 2
+  { SELECT ?cube WHERE { ... ranking logic ... }
+    HAVING (COUNT(?newerCube) + 1 > 2) }
+  # Then match all components of those cubes
+  { ?cube ... component patterns ... }
+}</pre>
 
                     <h3>Using Templates</h3>
                     <ol class="doc-list numbered">
                         <li>Set the <strong>Graph URI</strong> (e.g., <code>https://lindas.admin.ch/sfoe/cube</code>)</li>
                         <li>For single-cube operations, set the <strong>Cube URI</strong></li>
                         <li>Select a template from the dropdown</li>
-                        <li>Review the generated query</li>
+                        <li>Review the generated query - placeholders are auto-replaced</li>
                         <li>Click <strong>Run Query</strong> (SELECT) or <strong>Execute Update</strong> (DELETE)</li>
                     </ol>
                 </div>
