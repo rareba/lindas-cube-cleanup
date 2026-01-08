@@ -234,7 +234,7 @@ class CleanupService {
     }
 
     /**
-     * Delete a cube in chunks
+     * Delete a cube
      * @param {string} graphUri - Named graph URI
      * @param {string} cubeUri - Cube URI
      * @param {number} observationCount - Expected observation count
@@ -245,45 +245,32 @@ class CleanupService {
             observations: observationCount
         });
 
-        let totalDeleted = 0;
+        let totalDeleted = observationCount;
 
-        // Step 1: Delete observations in chunks
+        // Step 1: Delete observations
         if (observationCount > 0) {
-            let remainingObs = observationCount;
-            let iteration = 0;
+            const query = sparql.deleteObservationsQuery(graphUri, cubeUri);
 
-            while (remainingObs > 0) {
-                iteration++;
-                const query = sparql.deleteObservationsQuery(graphUri, cubeUri, this.chunkSize);
+            this.logger.debug('Deleting observations', {
+                cube: cubeUri,
+                count: observationCount
+            });
 
-                this.logger.debug('Deleting observation chunk', {
-                    cube: cubeUri,
-                    iteration,
-                    chunkSize: this.chunkSize
-                });
+            await this.triplestore.update(query);
 
-                await this.triplestore.update(query);
+            // Verify deletion
+            const countQuery = sparql.countObservationsQuery(graphUri, cubeUri);
+            const countResult = await this.triplestore.query(countQuery);
+            const remaining = parseInt(countResult.results.bindings[0]?.count?.value || '0', 10);
 
-                // Check remaining
-                const countQuery = sparql.countObservationsQuery(graphUri, cubeUri);
-                const countResult = await this.triplestore.query(countQuery);
-                const newCount = parseInt(countResult.results.bindings[0]?.count?.value || '0', 10);
-
-                const deleted = remainingObs - newCount;
-                totalDeleted += deleted;
-                remainingObs = newCount;
-
-                this.logger.debug('Chunk deleted', {
-                    deleted,
-                    remaining: remainingObs
-                });
-
-                // Safety: prevent infinite loop
-                if (deleted === 0 && remainingObs > 0) {
-                    this.logger.warn('No progress in deletion, breaking', { remaining: remainingObs });
-                    break;
-                }
+            if (remaining > 0) {
+                this.logger.warn('Some observations remain after deletion', { remaining });
             }
+
+            this.logger.debug('Observations deleted', {
+                deleted: observationCount - remaining,
+                remaining
+            });
         }
 
         // Step 2: Delete observation links

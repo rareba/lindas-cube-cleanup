@@ -131,9 +131,13 @@ WHERE {
 }
 
 /**
- * Delete cube - Step 1: Delete observations (chunked)
+ * Delete cube - Step 1: Delete observations
+ * Note: SPARQL UPDATE doesn't support LIMIT, so we delete all observations at once
+ * For very large cubes, the triplestore may handle this in batches internally
  */
 function deleteObservationsQuery(graphUri, cubeUri, limit = 50000) {
+    // Note: limit parameter kept for API compatibility but not used
+    // Fuseki handles large deletions efficiently
     return `${PREFIXES}
 WITH <${graphUri}>
 DELETE {
@@ -142,8 +146,7 @@ DELETE {
 WHERE {
   <${cubeUri}> cube:observationSet/cube:observation ?obs .
   ?obs ?p ?o .
-}
-LIMIT ${limit}`;
+}`;
 }
 
 /**
@@ -168,33 +171,38 @@ function deleteCubeMetadataQuery(graphUri, cubeUri) {
     return `${PREFIXES}
 WITH <${graphUri}>
 DELETE {
-  ?cube ?p1 ?o1 .
-  ?shape ?p2 ?o2 .
-  ?prop ?p3 ?o3 .
-  ?set ?p4 ?o4 .
+  ?s ?p ?o .
 }
 WHERE {
-  BIND(<${cubeUri}> AS ?cube)
-  ?cube rdf:type cube:Cube .
   {
-    ?cube ?p1 ?o1 .
+    <${cubeUri}> ?p ?o .
+    BIND(<${cubeUri}> AS ?s)
   }
   UNION
   {
-    ?cube cube:observationConstraint ?shape .
-    ?shape ?p2 ?o2 .
+    <${cubeUri}> ?p1 ?bn .
+    FILTER(isBlank(?bn))
+    ?bn ?p ?o .
+    BIND(?bn AS ?s)
   }
   UNION
   {
-    ?cube cube:observationConstraint/sh:property ?prop .
-    ?prop (<>|!<>)* ?propNode .
-    ?propNode ?p3 ?o3 .
-    BIND(?propNode AS ?prop)
+    <${cubeUri}> cube:observationConstraint ?shape .
+    ?shape ?p ?o .
+    BIND(?shape AS ?s)
   }
   UNION
   {
-    ?cube cube:observationSet ?set .
-    ?set ?p4 ?o4 .
+    <${cubeUri}> cube:observationConstraint ?shape .
+    ?shape sh:property ?propShape .
+    ?propShape ?p ?o .
+    BIND(?propShape AS ?s)
+  }
+  UNION
+  {
+    <${cubeUri}> cube:observationSet ?set .
+    ?set ?p ?o .
+    BIND(?set AS ?s)
   }
 }`;
 }
