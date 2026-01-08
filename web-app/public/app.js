@@ -76,17 +76,14 @@ function initEventListeners() {
     document.getElementById('btn-check-fuseki').addEventListener('click', checkFusekiConnection);
     document.getElementById('btn-create-dataset').addEventListener('click', createDataset);
 
-    // Import tab
-    document.getElementById('btn-search-graphs').addEventListener('click', searchGraphs);
-    document.getElementById('btn-list-cubes').addEventListener('click', listAvailableCubes);
-    document.getElementById('btn-import-selected').addEventListener('click', importSelectedCubes);
-    document.getElementById('btn-import-sample').addEventListener('click', importSampleData);
-
-    // Import tab - LINDAS dropdowns
+    // Import tab - simplified
     document.getElementById('btn-load-lindas-graphs').addEventListener('click', loadLindasGraphs);
-    document.getElementById('btn-load-lindas-cubes').addEventListener('click', loadLindasCubes);
     document.getElementById('lindas-graph-select').addEventListener('change', onLindasGraphSelected);
-    document.getElementById('lindas-cube-select').addEventListener('change', onLindasCubeSelected);
+    document.getElementById('btn-import-all-cubes').addEventListener('click', importAllCubesFromGraph);
+    document.getElementById('btn-import-sample').addEventListener('click', importSampleData);
+    document.getElementById('btn-go-to-explore').addEventListener('click', () => {
+        document.querySelector('[data-tab="explore"]').click();
+    });
 
     // Explore tab
     document.getElementById('btn-load-local-cubes').addEventListener('click', loadLocalCubes);
@@ -294,19 +291,164 @@ async function loadLindasGraphs() {
 // Handle graph selection from LINDAS dropdown
 function onLindasGraphSelected() {
     const graphSelect = document.getElementById('lindas-graph-select');
-    const cubeSelect = document.getElementById('lindas-cube-select');
 
     if (graphSelect.value) {
         elements.lindasGraph.value = graphSelect.value;
         syncGraphInputs();
-
-        // Clear cube dropdown when graph changes
-        cubeSelect.innerHTML = '<option value="">-- Click "Load Cubes" to see cubes --</option>';
-        document.getElementById('lindas-cubes-status').classList.add('hidden');
     }
 }
 
-// Load all cubes from selected LINDAS graph into dropdown
+// ========== IMPORT ALL CUBES WITH RATE LIMITING ==========
+
+// Import all cubes from selected graph with rate limiting
+async function importAllCubesFromGraph() {
+    if (!state.connected) {
+        alert('Please connect to Fuseki first (Setup tab)');
+        return;
+    }
+
+    const graphUri = elements.lindasGraph.value;
+    if (!graphUri) {
+        alert('Please select or enter a graph URI first');
+        return;
+    }
+
+    // Show progress UI
+    const progressContainer = document.getElementById('import-progress');
+    const progressFill = document.getElementById('import-progress-fill');
+    const importStep = document.getElementById('import-step');
+    const importCounter = document.getElementById('import-counter');
+    const importStatus = document.getElementById('import-status');
+    const currentCubeEl = document.getElementById('import-current-cube');
+    const rateLimitNotice = document.getElementById('import-rate-limit');
+    const importSummary = document.getElementById('import-summary');
+    const importBtn = document.getElementById('btn-import-all-cubes');
+
+    // Reset UI
+    progressContainer.classList.remove('hidden');
+    importSummary.classList.add('hidden');
+    progressFill.style.width = '0%';
+    importBtn.disabled = true;
+
+    // Step 1: Fetch list of cubes from LINDAS
+    importStep.textContent = 'Step 1: Fetching cube list from LINDAS...';
+    importCounter.textContent = '';
+    importStatus.textContent = 'Querying LINDAS for available cubes...';
+    currentCubeEl.textContent = '';
+
+    let cubes = [];
+    try {
+        const result = await api('/lindas/cubes', { graphUri });
+        if (result.results && result.results.bindings) {
+            cubes = result.results.bindings.map(b => ({
+                uri: b.cube.value,
+                title: b.title?.value || '',
+                version: b.version?.value || ''
+            }));
+        }
+    } catch (error) {
+        importStatus.textContent = `Error fetching cubes: ${error.message}`;
+        importBtn.disabled = false;
+        return;
+    }
+
+    if (cubes.length === 0) {
+        importStatus.textContent = 'No cubes found in this graph';
+        importBtn.disabled = false;
+        return;
+    }
+
+    importStatus.textContent = `Found ${cubes.length} cubes to import`;
+    progressFill.style.width = '5%';
+
+    // Step 2: Import cubes with rate limiting
+    importStep.textContent = 'Step 2: Downloading and importing cubes...';
+
+    const RATE_LIMIT_DELAY = 1000; // 1 second between requests to avoid overloading LINDAS
+    let imported = 0;
+    let errors = 0;
+    let totalTriples = 0;
+    const errorList = [];
+
+    for (let i = 0; i < cubes.length; i++) {
+        const cube = cubes[i];
+        const cubeName = cube.uri.split('/').slice(-2).join('/');
+
+        importCounter.textContent = `${i + 1} / ${cubes.length}`;
+        currentCubeEl.textContent = cube.uri;
+        importStatus.textContent = `Downloading: ${cubeName}`;
+
+        // Calculate progress (5% for fetching list, 95% for importing)
+        const progress = 5 + ((i / cubes.length) * 95);
+        progressFill.style.width = `${progress}%`;
+
+        try {
+            // Download from LINDAS
+            const downloadResult = await api('/lindas/download-cube', {
+                graphUri: graphUri,
+                cubeUri: cube.uri
+            });
+
+            importStatus.textContent = `Importing: ${cubeName} (${downloadResult.tripleCount} triples)`;
+
+            // Import to Fuseki
+            await api('/fuseki/import', {
+                endpoint: state.fusekiEndpoint,
+                dataset: state.fusekiDataset,
+                graphUri: graphUri,
+                triples: downloadResult.triples
+            });
+
+            imported++;
+            totalTriples += downloadResult.tripleCount || 0;
+
+        } catch (error) {
+            errors++;
+            errorList.push({ cube: cubeName, error: error.message });
+            console.error(`Error importing ${cube.uri}:`, error);
+        }
+
+        // Rate limiting - wait before next request (except for last one)
+        if (i < cubes.length - 1) {
+            rateLimitNotice.classList.remove('hidden');
+            await sleep(RATE_LIMIT_DELAY);
+            rateLimitNotice.classList.add('hidden');
+        }
+    }
+
+    // Complete
+    progressFill.style.width = '100%';
+    importStep.textContent = 'Import Complete';
+    importCounter.textContent = `${imported} / ${cubes.length}`;
+    importStatus.textContent = `Successfully imported ${imported} cubes`;
+    currentCubeEl.textContent = '';
+    rateLimitNotice.classList.add('hidden');
+
+    // Show summary
+    importSummary.classList.remove('hidden');
+    document.getElementById('summary-cubes-imported').textContent = imported;
+    document.getElementById('summary-triples-imported').textContent = totalTriples.toLocaleString();
+    document.getElementById('summary-errors').textContent = errors;
+
+    // Show errors if any
+    const errorListEl = document.getElementById('import-error-list');
+    if (errors > 0) {
+        errorListEl.classList.remove('hidden');
+        errorListEl.innerHTML = '<strong>Errors:</strong><br>' +
+            errorList.map(e => `- ${e.cube}: ${e.error}`).join('<br>');
+    } else {
+        errorListEl.classList.add('hidden');
+    }
+
+    importBtn.disabled = false;
+}
+
+// Helper: sleep for rate limiting
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Load all cubes from selected LINDAS graph into dropdown (legacy - kept for compatibility)
 async function loadLindasCubes() {
     const graphUri = elements.lindasGraph.value;
     const cubeSelect = document.getElementById('lindas-cube-select');
@@ -544,27 +686,47 @@ async function importSelectedCubes() {
 // Import sample data (co2wirkung cube with multiple versions)
 async function importSampleData() {
     if (!state.connected) {
-        alert('Please connect to Fuseki first');
+        alert('Please connect to Fuseki first (Setup tab)');
         return;
     }
 
+    // Show progress UI
     const progressContainer = document.getElementById('import-progress');
     const progressFill = document.getElementById('import-progress-fill');
-    const statusText = document.getElementById('import-status');
+    const importStep = document.getElementById('import-step');
+    const importCounter = document.getElementById('import-counter');
+    const importStatus = document.getElementById('import-status');
+    const currentCubeEl = document.getElementById('import-current-cube');
+    const rateLimitNotice = document.getElementById('import-rate-limit');
+    const importSummary = document.getElementById('import-summary');
+    const sampleBtn = document.getElementById('btn-import-sample');
 
+    // Reset UI
     progressContainer.classList.remove('hidden');
-    statusText.textContent = 'Loading sample cube versions (co2wirkung)...';
-    progressFill.style.width = '10%';
+    importSummary.classList.add('hidden');
+    progressFill.style.width = '0%';
+    sampleBtn.disabled = true;
+
+    importStep.textContent = 'Importing Sample Data (co2wirkung)';
+    importStatus.textContent = 'Loading 7 versions for cleanup demo...';
 
     // The co2wirkung cube has 7 versions - good for testing
     const baseCube = 'https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung';
     const versions = [1, 2, 3, 4, 5, 6, 7];
 
+    const RATE_LIMIT_DELAY = 500; // 500ms between requests
     let imported = 0;
-    for (const version of versions) {
+    let totalTriples = 0;
+    const errorList = [];
+
+    for (let i = 0; i < versions.length; i++) {
+        const version = versions[i];
         const cubeUri = `${baseCube}/${version}`;
-        statusText.textContent = `Downloading version ${version} of 7...`;
-        progressFill.style.width = `${10 + (imported / versions.length) * 80}%`;
+
+        importCounter.textContent = `${i + 1} / ${versions.length}`;
+        currentCubeEl.textContent = cubeUri;
+        importStatus.textContent = `Downloading version ${version}...`;
+        progressFill.style.width = `${((i / versions.length) * 100)}%`;
 
         try {
             const downloadResult = await api('/lindas/download-cube', {
@@ -572,7 +734,7 @@ async function importSampleData() {
                 cubeUri: cubeUri
             });
 
-            statusText.textContent = `Importing version ${version} (${downloadResult.tripleCount} triples)...`;
+            importStatus.textContent = `Importing version ${version} (${downloadResult.tripleCount} triples)...`;
 
             await api('/fuseki/import', {
                 endpoint: state.fusekiEndpoint,
@@ -582,13 +744,44 @@ async function importSampleData() {
             });
 
             imported++;
+            totalTriples += downloadResult.tripleCount || 0;
         } catch (error) {
+            errorList.push({ cube: `v${version}`, error: error.message });
             console.error(`Error importing version ${version}:`, error);
+        }
+
+        // Rate limiting
+        if (i < versions.length - 1) {
+            rateLimitNotice.classList.remove('hidden');
+            await sleep(RATE_LIMIT_DELAY);
+            rateLimitNotice.classList.add('hidden');
         }
     }
 
+    // Complete
     progressFill.style.width = '100%';
-    statusText.textContent = `Imported ${imported} versions of co2wirkung cube. Ready for cleanup demo!`;
+    importStep.textContent = 'Sample Import Complete';
+    importCounter.textContent = `${imported} / ${versions.length}`;
+    importStatus.textContent = `Imported ${imported} versions of co2wirkung cube`;
+    currentCubeEl.textContent = '';
+    rateLimitNotice.classList.add('hidden');
+
+    // Show summary
+    importSummary.classList.remove('hidden');
+    document.getElementById('summary-cubes-imported').textContent = imported;
+    document.getElementById('summary-triples-imported').textContent = totalTriples.toLocaleString();
+    document.getElementById('summary-errors').textContent = errorList.length;
+
+    const errorListEl = document.getElementById('import-error-list');
+    if (errorList.length > 0) {
+        errorListEl.classList.remove('hidden');
+        errorListEl.innerHTML = '<strong>Errors:</strong><br>' +
+            errorList.map(e => `- ${e.cube}: ${e.error}`).join('<br>');
+    } else {
+        errorListEl.classList.add('hidden');
+    }
+
+    sampleBtn.disabled = false;
 }
 
 // Load local cubes from Fuseki

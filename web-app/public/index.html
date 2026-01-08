@@ -94,13 +94,13 @@
         <section id="import" class="tab-content">
             <div class="card">
                 <h2>Import Data from LINDAS</h2>
-                <p class="description">Select a graph and cubes from LINDAS to import into your local Fuseki instance.</p>
+                <p class="description">Import cube data from LINDAS into your local Fuseki instance for testing.</p>
 
                 <div class="form-group">
                     <label for="lindas-graph">LINDAS Graph:</label>
                     <div class="input-with-dropdown">
                         <select id="lindas-graph-select" class="dropdown-select">
-                            <option value="">-- Click "Load Graphs" to populate --</option>
+                            <option value="">-- Click "Load Graphs" to see available graphs --</option>
                         </select>
                         <button type="button" id="btn-load-lindas-graphs" class="btn btn-small btn-secondary" title="Load all available graphs from LINDAS">Load Graphs</button>
                     </div>
@@ -108,48 +108,60 @@
                 </div>
 
                 <div id="lindas-graphs-status" class="info-box hidden"></div>
-
-                <div class="button-group">
-                    <button id="btn-search-graphs" class="btn btn-secondary">Search Graphs</button>
-                    <button id="btn-list-cubes" class="btn btn-primary">List Available Cubes</button>
-                </div>
-
-                <div id="graph-search-results" class="hidden">
-                    <h3>Available Graphs (Search Results)</h3>
-                    <div id="graph-list" class="scrollable-list"></div>
-                </div>
             </div>
 
             <div class="card" id="cube-import-section">
-                <h2>Select Cubes to Import</h2>
-                <p class="description">Select cubes from the dropdown or list all cubes from the selected graph.</p>
+                <h2>Import Cubes</h2>
+                <p class="description">Import all cubes from the selected graph. Downloads are rate-limited to avoid overloading the server.</p>
 
-                <div class="form-group">
-                    <label for="lindas-cube-select">Quick Select Cube:</label>
-                    <div class="input-with-dropdown">
-                        <select id="lindas-cube-select" class="dropdown-select">
-                            <option value="">-- Select a graph first, then load cubes --</option>
-                        </select>
-                        <button type="button" id="btn-load-lindas-cubes" class="btn btn-small btn-secondary" title="Load all cubes from selected graph">Load Cubes</button>
+                <div id="import-options" class="import-options">
+                    <div class="option-card primary-option">
+                        <h3>Import All Cubes</h3>
+                        <p>Download and import all cube versions from the selected graph.</p>
+                        <button id="btn-import-all-cubes" class="btn btn-primary btn-large">Import All Cubes from Graph</button>
                     </div>
-                </div>
-
-                <div id="lindas-cubes-status" class="info-box hidden"></div>
-
-                <div id="cube-list-container" class="scrollable-list">
-                    <p class="placeholder-text">Click "List Available Cubes" or use the dropdown above to select cubes</p>
-                </div>
-
-                <div class="button-group">
-                    <button id="btn-import-selected" class="btn btn-primary" disabled>Import Selected Cubes</button>
-                    <button id="btn-import-sample" class="btn btn-secondary">Import Sample (co2wirkung)</button>
+                    <div class="option-card">
+                        <h3>Quick Demo</h3>
+                        <p>Import sample data (co2wirkung - 7 versions) for testing.</p>
+                        <button id="btn-import-sample" class="btn btn-secondary">Import Sample Data</button>
+                    </div>
                 </div>
 
                 <div id="import-progress" class="progress-container hidden">
+                    <div class="progress-header">
+                        <span id="import-step">Preparing...</span>
+                        <span id="import-counter">0 / 0</span>
+                    </div>
                     <div class="progress-bar">
                         <div id="import-progress-fill" class="progress-fill"></div>
                     </div>
-                    <p id="import-status" class="status-text"></p>
+                    <div class="progress-details">
+                        <p id="import-status" class="status-text"></p>
+                        <p id="import-current-cube" class="current-item"></p>
+                    </div>
+                    <div id="import-rate-limit" class="rate-limit-notice hidden">
+                        <span class="rate-icon">&#8987;</span> Rate limiting: waiting before next download...
+                    </div>
+                </div>
+
+                <div id="import-summary" class="import-summary hidden">
+                    <h3>Import Complete</h3>
+                    <div class="summary-stats">
+                        <div class="stat">
+                            <span class="stat-value" id="summary-cubes-imported">0</span>
+                            <span class="stat-label">Cubes Imported</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="summary-triples-imported">0</span>
+                            <span class="stat-label">Triples Added</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="summary-errors">0</span>
+                            <span class="stat-label">Errors</span>
+                        </div>
+                    </div>
+                    <div id="import-error-list" class="error-list hidden"></div>
+                    <button id="btn-go-to-explore" class="btn btn-primary">Continue to Explore Cubes</button>
                 </div>
             </div>
         </section>
