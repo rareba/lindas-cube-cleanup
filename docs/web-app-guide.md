@@ -54,18 +54,20 @@ npm install
 2. **Select from Dropdown**: Choose a graph from the dropdown menu, or enter a URI manually
 3. **Default Graph**: The default is `https://lindas.admin.ch/sfoe/cube`
 
-**Cube Selection:**
-1. **Load Cubes**: After selecting a graph, click "Load Cubes" to populate the cube dropdown
-2. **Quick Select**: Choose a specific cube from the dropdown (cubes with multiple versions are grouped)
-3. **List All Cubes**: Alternatively, click "List Available Cubes" to see all cubes in a scrollable list
-4. **Select Cubes**: Check the cubes you want to import
-5. **Import**: Download and import selected cubes to local Fuseki
-6. **Quick Option**: Use "Import Sample" to import the co2wirkung cube (7 versions) for testing
+**Import Options:**
+1. **Import All Cubes from Graph** (Recommended): Downloads and imports ALL cube versions from the selected graph
+   - Shows detailed progress bar with current cube and count (e.g., "12 / 45")
+   - Rate-limited to 1 request per second to avoid overloading LINDAS
+   - Displays summary when complete (cubes imported, triples, errors)
 
-The dropdown menus are organized:
-- Graphs are shown with their triple count
-- Cubes with multiple versions are grouped by base cube name
-- Hover over options to see full URIs
+2. **Import Sample Data**: Quick demo option that imports the co2wirkung cube (7 versions) for testing cleanup functionality
+
+**Progress Bar Features:**
+- Current step indicator (fetching list / importing)
+- Current cube being downloaded (full URI)
+- Counter showing progress (X / Y)
+- Rate limiting notice when waiting between downloads
+- Import summary with statistics and error list
 
 ### Tab 3: Explore Cubes
 
