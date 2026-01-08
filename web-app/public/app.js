@@ -990,7 +990,7 @@ function renderCubesToDelete() {
 
         return `
             <div class="list-item">
-                <input type="checkbox" class="deletion-checkbox" data-cube="${cubeUri}" checked>
+                <input type="checkbox" class="deletion-checkbox" data-cube="${cubeUri}" checked onchange="updateDeletionButtons()">
                 <div class="list-item-content">
                     <div class="list-item-title">${baseCube} v${version}</div>
                 </div>
@@ -1003,8 +1003,12 @@ function renderCubesToDelete() {
 
 function updateDeletionButtons() {
     const checkboxes = document.querySelectorAll('.deletion-checkbox:checked');
-    document.getElementById('btn-delete-selected').disabled = !state.selectedCubeForDeletion;
-    document.getElementById('btn-delete-all-old').disabled = checkboxes.length === 0;
+    const hasSelection = checkboxes.length > 0;
+    // Enable both buttons when any checkbox is checked
+    document.getElementById('btn-delete-selected').disabled = !hasSelection;
+    document.getElementById('btn-delete-all-old').disabled = !hasSelection;
+    // Update state with first selected cube
+    state.selectedCubeForDeletion = hasSelection ? checkboxes[0].dataset.cube : null;
 }
 
 async function selectCubeForDeletion(cubeUri) {
