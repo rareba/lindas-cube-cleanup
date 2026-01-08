@@ -226,6 +226,94 @@ Body: { endpoint, dataset, graphUri }
 
 ---
 
+## Query 05: Preview Single Cube Deletion
+
+**File**: `queries/universal/05-preview-single-cube.rq`
+
+**Purpose**: Count all triples that would be deleted for a specific cube. Run this BEFORE deletion to verify what will be removed.
+
+### SPARQL Query
+
+```sparql
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX schema: <http://schema.org/>
+
+SELECT
+    ?cube
+    ?title
+    (COUNT(DISTINCT ?metaTriple) AS ?metadataTriples)
+    (COUNT(DISTINCT ?shapeTriple) AS ?shapeTriples)
+    (COUNT(DISTINCT ?propTriple) AS ?propertyShapeTriples)
+    (COUNT(DISTINCT ?setTriple) AS ?observationSetTriples)
+    (COUNT(DISTINCT ?obsTriple) AS ?observationTriples)
+    ((COUNT(DISTINCT ?metaTriple) + COUNT(DISTINCT ?shapeTriple) + COUNT(DISTINCT ?propTriple) + COUNT(DISTINCT ?setTriple) + COUNT(DISTINCT ?obsTriple)) AS ?totalTriples)
+WHERE {
+    GRAPH <GRAPH_URI> {
+        BIND(<CUBE_URI> AS ?cube)
+        ?cube rdf:type cube:Cube .
+
+        OPTIONAL { ?cube schema:name ?title . FILTER(lang(?title) = "en" || lang(?title) = "") }
+
+        OPTIONAL {
+            ?cube ?p1 ?metaLevel1 .
+            BIND(CONCAT(STR(?cube), "|", STR(?p1), "|", STR(?metaLevel1)) AS ?metaTriple)
+        }
+
+        OPTIONAL {
+            ?cube cube:observationConstraint ?shape .
+            ?shape ?shapeP ?shapeO .
+            BIND(CONCAT(STR(?shape), "|", STR(?shapeP), "|", STR(?shapeO)) AS ?shapeTriple)
+        }
+
+        OPTIONAL {
+            ?cube cube:observationConstraint/sh:property ?property .
+            ?property (<>|!<>)* ?propertyS .
+            ?propertyS ?propertyP ?propertyO .
+            BIND(CONCAT(STR(?propertyS), "|", STR(?propertyP), "|", STR(?propertyO)) AS ?propTriple)
+        }
+
+        OPTIONAL {
+            ?cube cube:observationSet ?set .
+            ?set ?setP ?setO .
+            BIND(CONCAT(STR(?set), "|", STR(?setP), "|", STR(?setO)) AS ?setTriple)
+        }
+
+        OPTIONAL {
+            ?cube cube:observationSet ?obsSet .
+            ?obsSet cube:observation ?obs .
+            ?obs ?obsP ?obsO .
+            BIND(CONCAT(STR(?obs), "|", STR(?obsP), "|", STR(?obsO)) AS ?obsTriple)
+        }
+    }
+}
+GROUP BY ?cube ?title
+```
+
+### How to Use
+
+1. Replace `<GRAPH_URI>` with your target graph (e.g., `https://lindas.admin.ch/sfoe/cube`)
+2. Replace `<CUBE_URI>` with the cube you want to preview (e.g., `https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/1`)
+3. Run on your SPARQL endpoint
+
+### Example Output
+
+| cube | title | metadataTriples | shapeTriples | propertyShapeTriples | observationSetTriples | observationTriples | totalTriples |
+|------|-------|-----------------|--------------|----------------------|-----------------------|-------------------|--------------|
+| .../co2wirkung/1 | CO2 Impact | 15 | 8 | 45 | 3 | 125000 | 125071 |
+
+### Logic Explanation
+
+The query uses the same UNION pattern as the delete query but with SELECT/COUNT instead of DELETE:
+- **metadataTriples**: Direct properties of the cube + blank node properties
+- **shapeTriples**: SHACL constraint shape triples
+- **propertyShapeTriples**: Property shape definitions (dimensions, measures)
+- **observationSetTriples**: Observation container triples
+- **observationTriples**: Actual data points (usually the largest count)
+
+---
+
 ## Query 06: Delete Single Cube (Complete)
 
 **File**: `queries/universal/06-delete-single-cube.rq`
@@ -281,6 +369,20 @@ WHERE {
     ?observationS ?observationP ?observationO }
 }
 ```
+
+### How to Use
+
+1. Replace `<GRAPH_URI>` with your target graph (e.g., `https://lindas.admin.ch/sfoe/cube`)
+2. Replace `<CUBE_URI>` with the cube you want to delete (e.g., `https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/1`)
+3. **IMPORTANT**: Run Query 05 (Preview) first to verify what will be deleted!
+4. Execute on your SPARQL UPDATE endpoint
+
+### Warning
+
+This query permanently deletes all data for the specified cube. There is no undo. Always:
+- Run the preview query first
+- Create a backup if needed
+- Test on a local Fuseki instance before running on production
 
 ### Logic Explanation - Cube Structure
 
