@@ -25,8 +25,9 @@
         <button class="tab-btn" data-tab="import">2. Import Data</button>
         <button class="tab-btn" data-tab="explore">3. Explore Cubes</button>
         <button class="tab-btn" data-tab="cleanup">4. Cleanup</button>
-        <button class="tab-btn" data-tab="backups">5. Backups</button>
-        <button class="tab-btn" data-tab="docs">6. Documentation</button>
+        <button class="tab-btn" data-tab="query-editor">5. Query Editor</button>
+        <button class="tab-btn" data-tab="backups">6. Backups</button>
+        <button class="tab-btn" data-tab="docs">7. Documentation</button>
     </nav>
 
     <main>
@@ -258,6 +259,72 @@
                         <button id="btn-view-backup" class="btn btn-secondary">View Backup</button>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- Query Editor Tab -->
+        <section id="query-editor" class="tab-content">
+            <div class="card">
+                <h2>SPARQL Query Editor</h2>
+                <p class="description">Run SPARQL queries directly against your Fuseki instance. Use the templates for common operations.</p>
+
+                <div class="query-controls">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="query-graph">Graph URI:</label>
+                            <input type="text" id="query-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                        </div>
+                        <div class="form-group">
+                            <label for="query-cube-uri">Cube URI (for templates):</label>
+                            <input type="text" id="query-cube-uri" placeholder="https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/1">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="query-template">Query Template:</label>
+                        <select id="query-template">
+                            <option value="custom">Custom Query</option>
+                            <option value="preview-single">Preview Single Cube (Count Triples)</option>
+                            <option value="delete-single">Delete Single Cube (DESTRUCTIVE!)</option>
+                            <option value="list-cubes">List All Cubes</option>
+                            <option value="count-triples">Count Total Triples in Graph</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="query-type">Query Type:</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="query-type" value="select" checked> SELECT (Read)
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="query-type" value="update"> UPDATE (Write/Delete)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="query-text">SPARQL Query:</label>
+                    <textarea id="query-text" class="query-textarea" rows="20" spellcheck="false" placeholder="Enter your SPARQL query here..."></textarea>
+                </div>
+
+                <div class="button-group">
+                    <button id="btn-load-template" class="btn btn-secondary">Load Template</button>
+                    <button id="btn-execute-query" class="btn btn-primary">Execute Query</button>
+                    <button id="btn-clear-query" class="btn btn-secondary">Clear</button>
+                </div>
+
+                <div id="query-status" class="query-status hidden"></div>
+            </div>
+
+            <div class="card" id="query-results-card" style="display: none;">
+                <h2>Query Results</h2>
+                <div class="results-header">
+                    <span id="results-count"></span>
+                    <span id="results-time"></span>
+                </div>
+                <div id="query-results" class="query-results"></div>
             </div>
         </section>
 

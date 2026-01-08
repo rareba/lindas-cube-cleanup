@@ -724,6 +724,51 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
     }
 });
 
+// ========== QUERY EDITOR API ==========
+
+// Execute raw SPARQL query (SELECT or UPDATE)
+app.post('/api/query/execute', async (req, res) => {
+    try {
+        const { endpoint, dataset, query, queryType } = req.body;
+
+        if (!query || !query.trim()) {
+            return res.status(400).json({ error: 'Query is required' });
+        }
+
+        const startTime = Date.now();
+
+        if (queryType === 'update') {
+            // Execute UPDATE query
+            const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+            await executeSparqlUpdate(updateEndpoint, query);
+            const duration = Date.now() - startTime;
+
+            res.json({
+                success: true,
+                queryType: 'update',
+                message: 'Update query executed successfully',
+                duration
+            });
+        } else {
+            // Execute SELECT query
+            const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/sparql` : `${endpoint}/sparql`;
+            const result = await executeSparqlSelect(sparqlEndpoint, query);
+            const duration = Date.now() - startTime;
+
+            res.json({
+                success: true,
+                queryType: 'select',
+                results: result.results,
+                head: result.head,
+                duration,
+                rowCount: result.results.bindings.length
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ========== BACKUP AND RESTORE API ==========
 
 // Clean up old backups (older than BACKUP_RETENTION_DAYS)

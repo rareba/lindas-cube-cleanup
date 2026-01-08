@@ -97,6 +97,12 @@ function initEventListeners() {
     document.getElementById('btn-restore-backup').addEventListener('click', restoreBackup);
     document.getElementById('btn-delete-backup').addEventListener('click', deleteBackup);
 
+    // Query Editor tab
+    document.getElementById('btn-load-template').addEventListener('click', loadQueryTemplate);
+    document.getElementById('btn-execute-query').addEventListener('click', executeQuery);
+    document.getElementById('btn-clear-query').addEventListener('click', clearQuery);
+    document.getElementById('query-template').addEventListener('change', onTemplateChange);
+
     // Sync inputs
     elements.lindasGraph.addEventListener('change', syncGraphInputs);
     elements.fusekiEndpoint.addEventListener('change', () => {
@@ -1154,4 +1160,305 @@ async function deleteBackup() {
     } catch (error) {
         alert(`Error deleting backup: ${error.message}`);
     }
+}
+
+// ========== QUERY EDITOR ==========
+
+// Query templates
+const queryTemplates = {
+    'preview-single': {
+        name: 'Preview Single Cube',
+        type: 'select',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX schema: <http://schema.org/>
+
+# Simplified preview query - counts cube components
+SELECT
+    ?cube
+    ?title
+    ?dateCreated
+    (COUNT(DISTINCT ?shape) AS ?shapeCount)
+    (COUNT(DISTINCT ?property) AS ?propertyCount)
+    (COUNT(DISTINCT ?obsSet) AS ?observationSetCount)
+    (COUNT(DISTINCT ?obs) AS ?observationCount)
+WHERE {
+    GRAPH <GRAPH_URI> {
+        BIND(<CUBE_URI> AS ?cube)
+        ?cube rdf:type cube:Cube .
+
+        OPTIONAL { ?cube schema:name ?title . FILTER(lang(?title) = "en" || lang(?title) = "") }
+        OPTIONAL { ?cube schema:dateCreated ?dateCreated }
+
+        OPTIONAL { ?cube cube:observationConstraint ?shape }
+        OPTIONAL { ?cube cube:observationConstraint/sh:property ?property }
+        OPTIONAL { ?cube cube:observationSet ?obsSet }
+        OPTIONAL { ?cube cube:observationSet/cube:observation ?obs }
+    }
+}
+GROUP BY ?cube ?title ?dateCreated`
+    },
+
+    'delete-single': {
+        name: 'Delete Single Cube',
+        type: 'update',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+WITH <GRAPH_URI>
+DELETE {
+  ?cube a cube:Cube ;
+        cube:observationConstraint ?shape ;
+        cube:observationSet ?set ;
+        ?p1 ?metaLevel1 .
+
+  ?metaLevel1 ?p2 ?metaLevel2 .
+
+  ?shape ?shapeP ?shapeO .
+  ?propertyS ?propertyP ?propertyO .
+
+  ?set cube:observation ?observationS .
+  ?set ?setP ?setO .
+  ?observationS ?observationP ?observationO .
+}
+WHERE {
+  BIND(<CUBE_URI> AS ?cube)
+  ?cube rdf:type cube:Cube
+
+  { ?cube ?p1 ?metaLevel1
+    OPTIONAL {
+      ?metaLevel1 ?p2 ?metaLevel2
+      FILTER(isBlank(?metaLevel1))
+    }
+  }
+  UNION
+  { ?cube cube:observationConstraint ?shape .
+    ?shape ?shapeP ?shapeO }
+  UNION
+  { ?cube cube:observationConstraint/sh:property ?property .
+    ?property (<>|!<>)* ?propertyS .
+    ?propertyS ?propertyP ?propertyO }
+  UNION
+  { ?cube cube:observationSet ?set .
+    ?set ?setP ?setO . }
+  UNION
+  { ?cube cube:observationSet ?set .
+    ?set cube:observation ?observationS .
+    ?observationS ?observationP ?observationO }
+}`
+    },
+
+    'list-cubes': {
+        name: 'List All Cubes',
+        type: 'select',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX schema: <http://schema.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT DISTINCT ?baseCube ?cube ?version ?dateCreated ?title
+WHERE {
+  GRAPH <GRAPH_URI> {
+    ?cube a cube:Cube .
+
+    OPTIONAL { ?cube schema:dateCreated ?dateCreated }
+    OPTIONAL { ?cube schema:name ?title . FILTER(lang(?title) = "en" || lang(?title) = "") }
+
+    BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?versionStr)
+    BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?versionStr), 0) AS ?version)
+
+    BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?baseCubeStr)
+    BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), IRI(?baseCubeStr), ?cube) AS ?baseCube)
+  }
+}
+ORDER BY ?baseCube DESC(?version)
+LIMIT 100`
+    },
+
+    'count-triples': {
+        name: 'Count Total Triples',
+        type: 'select',
+        query: `SELECT (COUNT(*) AS ?tripleCount)
+WHERE {
+  GRAPH <GRAPH_URI> {
+    ?s ?p ?o .
+  }
+}`
+    }
+};
+
+// Load selected template into editor
+function loadQueryTemplate() {
+    const templateSelect = document.getElementById('query-template');
+    const template = templateSelect.value;
+    const queryTextarea = document.getElementById('query-text');
+    const graphInput = document.getElementById('query-graph');
+    const cubeInput = document.getElementById('query-cube-uri');
+
+    if (template === 'custom') {
+        return;
+    }
+
+    const tmpl = queryTemplates[template];
+    if (!tmpl) {
+        alert('Template not found');
+        return;
+    }
+
+    // Replace placeholders with actual values
+    let query = tmpl.query;
+    const graphUri = graphInput.value || 'https://lindas.admin.ch/sfoe/cube';
+    const cubeUri = cubeInput.value || '<CUBE_URI>';
+
+    query = query.replace(/GRAPH_URI/g, graphUri);
+    query = query.replace(/CUBE_URI/g, cubeUri);
+
+    queryTextarea.value = query;
+
+    // Set query type
+    const queryTypeRadios = document.querySelectorAll('input[name="query-type"]');
+    queryTypeRadios.forEach(radio => {
+        radio.checked = radio.value === tmpl.type;
+    });
+
+    // Show status
+    showQueryStatus(`Template "${tmpl.name}" loaded. ${tmpl.type === 'update' ? 'WARNING: This is a destructive UPDATE query!' : ''}`, tmpl.type === 'update' ? 'warning' : 'info');
+}
+
+// Handle template dropdown change
+function onTemplateChange() {
+    const templateSelect = document.getElementById('query-template');
+    const template = templateSelect.value;
+
+    if (template !== 'custom') {
+        loadQueryTemplate();
+    }
+}
+
+// Execute query
+async function executeQuery() {
+    const queryTextarea = document.getElementById('query-text');
+    const query = queryTextarea.value.trim();
+
+    if (!query) {
+        alert('Please enter a query');
+        return;
+    }
+
+    const queryType = document.querySelector('input[name="query-type"]:checked').value;
+
+    // Confirm for UPDATE queries
+    if (queryType === 'update') {
+        if (!confirm('WARNING: This is an UPDATE query that will modify data. Are you sure you want to execute it?')) {
+            return;
+        }
+    }
+
+    showQueryStatus('Executing query...', 'info');
+
+    try {
+        const response = await fetch('/api/query/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                endpoint: state.fusekiEndpoint,
+                dataset: state.fusekiDataset,
+                query: query,
+                queryType: queryType
+            })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.error || 'Query execution failed');
+        }
+
+        if (result.queryType === 'update') {
+            showQueryStatus(`Update executed successfully in ${result.duration}ms`, 'success');
+            document.getElementById('query-results-card').style.display = 'none';
+        } else {
+            showQueryStatus(`Query returned ${result.rowCount} rows in ${result.duration}ms`, 'success');
+            displayQueryResults(result);
+        }
+
+    } catch (error) {
+        showQueryStatus(`Error: ${error.message}`, 'error');
+        document.getElementById('query-results-card').style.display = 'none';
+    }
+}
+
+// Display SELECT query results
+function displayQueryResults(result) {
+    const resultsCard = document.getElementById('query-results-card');
+    const resultsContainer = document.getElementById('query-results');
+    const resultsCount = document.getElementById('results-count');
+    const resultsTime = document.getElementById('results-time');
+
+    resultsCard.style.display = 'block';
+    resultsCount.textContent = `${result.rowCount} rows`;
+    resultsTime.textContent = `${result.duration}ms`;
+
+    if (result.rowCount === 0) {
+        resultsContainer.innerHTML = '<p class="no-results">No results found</p>';
+        return;
+    }
+
+    // Build table
+    const headers = result.head.vars;
+    const rows = result.results.bindings;
+
+    let html = '<div class="results-table-wrapper"><table class="results-table"><thead><tr>';
+
+    // Headers
+    headers.forEach(h => {
+        html += `<th>${h}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    // Rows
+    rows.forEach(row => {
+        html += '<tr>';
+        headers.forEach(h => {
+            const cell = row[h];
+            let value = '';
+            if (cell) {
+                value = cell.value;
+                // Shorten long URIs for display
+                if (cell.type === 'uri' && value.length > 60) {
+                    const shortValue = '...' + value.slice(-50);
+                    value = `<span title="${value}">${shortValue}</span>`;
+                }
+            }
+            html += `<td>${value}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+
+    resultsContainer.innerHTML = html;
+}
+
+// Clear query editor
+function clearQuery() {
+    document.getElementById('query-text').value = '';
+    document.getElementById('query-template').value = 'custom';
+    document.getElementById('query-results-card').style.display = 'none';
+    hideQueryStatus();
+}
+
+// Show query status message
+function showQueryStatus(message, type) {
+    const statusEl = document.getElementById('query-status');
+    statusEl.textContent = message;
+    statusEl.className = `query-status ${type}`;
+    statusEl.classList.remove('hidden');
+}
+
+// Hide query status
+function hideQueryStatus() {
+    const statusEl = document.getElementById('query-status');
+    statusEl.classList.add('hidden');
 }
