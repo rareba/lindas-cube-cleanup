@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINDAS Cube Version Cleanup</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>LINDAS Cube Version Cleanup</h1>
+            <p class="subtitle">Demo Tool - Delete old cube versions while preserving the newest 2</p>
+        </div>
+        <div class="connection-status">
+            <div id="fuseki-status" class="status-indicator disconnected">
+                <span class="status-dot"></span>
+                <span class="status-text">Fuseki: Disconnected</span>
+            </div>
+        </div>
+    </header>
+
+    <nav class="tabs">
+        <button class="tab-btn active" data-tab="setup">1. Setup</button>
+        <button class="tab-btn" data-tab="import">2. Import Data</button>
+        <button class="tab-btn" data-tab="explore">3. Explore Cubes</button>
+        <button class="tab-btn" data-tab="cleanup">4. Cleanup</button>
+    </nav>
+
+    <main>
+        <!-- Setup Tab -->
+        <section id="setup" class="tab-content active">
+            <div class="card">
+                <h2>Fuseki Configuration</h2>
+                <p class="description">Configure the connection to your local Apache Fuseki instance.</p>
+
+                <div class="form-group">
+                    <label for="fuseki-endpoint">Fuseki Endpoint:</label>
+                    <input type="text" id="fuseki-endpoint" value="http://localhost:3030" placeholder="http://localhost:3030">
+                </div>
+
+                <div class="form-group">
+                    <label for="fuseki-dataset">Dataset Name:</label>
+                    <input type="text" id="fuseki-dataset" value="lindas" placeholder="lindas">
+                </div>
+
+                <div class="button-group">
+                    <button id="btn-check-fuseki" class="btn btn-primary">Check Connection</button>
+                    <button id="btn-create-dataset" class="btn btn-secondary">Create Dataset</button>
+                </div>
+
+                <div id="fuseki-info" class="info-box hidden"></div>
+            </div>
+
+            <div class="card">
+                <h2>How It Works</h2>
+                <div class="workflow-steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h3>Import Data</h3>
+                            <p>Download cube data from LINDAS and import it into your local Fuseki instance for safe testing.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h3>Explore Cubes</h3>
+                            <p>View all cubes and their versions. Identify which cubes have more than 2 versions.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h3>Preview Deletions</h3>
+                            <p>See exactly which versions will be deleted and how many triples are affected.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">4</div>
+                        <div class="step-content">
+                            <h3>Execute Cleanup</h3>
+                            <p>Delete old versions in a controlled manner, keeping only the newest 2 versions.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Import Tab -->
+        <section id="import" class="tab-content">
+            <div class="card">
+                <h2>Import Data from LINDAS</h2>
+                <p class="description">Download cube data from LINDAS and import it into your local Fuseki instance.</p>
+
+                <div class="form-group">
+                    <label for="lindas-graph">LINDAS Graph URI:</label>
+                    <input type="text" id="lindas-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                </div>
+
+                <div class="button-group">
+                    <button id="btn-search-graphs" class="btn btn-secondary">Search Graphs</button>
+                    <button id="btn-list-cubes" class="btn btn-primary">List Available Cubes</button>
+                </div>
+
+                <div id="graph-search-results" class="hidden">
+                    <h3>Available Graphs</h3>
+                    <div id="graph-list" class="scrollable-list"></div>
+                </div>
+            </div>
+
+            <div class="card" id="cube-import-section">
+                <h2>Select Cubes to Import</h2>
+                <p class="description">Select specific cubes to import for testing, or import a sample.</p>
+
+                <div id="cube-list-container" class="scrollable-list">
+                    <p class="placeholder-text">Click "List Available Cubes" to see cubes from LINDAS</p>
+                </div>
+
+                <div class="button-group">
+                    <button id="btn-import-selected" class="btn btn-primary" disabled>Import Selected Cubes</button>
+                    <button id="btn-import-sample" class="btn btn-secondary">Import Sample (co2wirkung)</button>
+                </div>
+
+                <div id="import-progress" class="progress-container hidden">
+                    <div class="progress-bar">
+                        <div id="import-progress-fill" class="progress-fill"></div>
+                    </div>
+                    <p id="import-status" class="status-text"></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Explore Tab -->
+        <section id="explore" class="tab-content">
+            <div class="card">
+                <h2>Local Cube Explorer</h2>
+                <p class="description">View cubes imported into your local Fuseki instance.</p>
+
+                <div class="form-group">
+                    <label for="local-graph">Graph to Explore:</label>
+                    <input type="text" id="local-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                </div>
+
+                <div class="button-group">
+                    <button id="btn-load-local-cubes" class="btn btn-primary">Load Local Cubes</button>
+                    <button id="btn-count-triples" class="btn btn-secondary">Count Total Triples</button>
+                </div>
+
+                <div id="triple-count-info" class="info-box hidden"></div>
+            </div>
+
+            <div class="card">
+                <h2>Cubes with Multiple Versions</h2>
+                <p class="description">These cubes have more than 2 versions and are candidates for cleanup.</p>
+
+                <div id="multi-version-cubes" class="table-container">
+                    <p class="placeholder-text">Load cubes to see version information</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>All Cube Versions</h2>
+                <div id="all-cube-versions" class="table-container">
+                    <p class="placeholder-text">Load cubes to see all versions</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Cleanup Tab -->
+        <section id="cleanup" class="tab-content">
+            <div class="card">
+                <h2>Version Cleanup Preview</h2>
+                <p class="description">Preview which versions will be deleted (keeping newest 2 per cube).</p>
+
+                <div class="form-group">
+                    <label for="cleanup-graph">Graph:</label>
+                    <input type="text" id="cleanup-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                </div>
+
+                <button id="btn-identify-deletions" class="btn btn-primary">Identify Versions to Delete</button>
+
+                <div id="deletion-preview" class="table-container">
+                    <p class="placeholder-text">Click "Identify Versions to Delete" to see the cleanup plan</p>
+                </div>
+            </div>
+
+            <div class="card" id="deletion-detail-card" style="display: none;">
+                <h2>Deletion Details</h2>
+                <p class="description">Select a cube version below to see how many triples will be deleted.</p>
+
+                <div id="cubes-to-delete" class="scrollable-list"></div>
+
+                <div id="selected-cube-preview" class="hidden">
+                    <h3>Selected Cube: <span id="selected-cube-name"></span></h3>
+                    <div id="triple-breakdown" class="stats-grid"></div>
+                </div>
+            </div>
+
+            <div class="card" id="deletion-execution-card" style="display: none;">
+                <h2>Execute Deletion</h2>
+                <p class="description warning">Warning: This will permanently delete the selected cube version from your local Fuseki instance.</p>
+
+                <div id="deletion-queue" class="scrollable-list"></div>
+
+                <div class="button-group">
+                    <button id="btn-delete-selected" class="btn btn-danger" disabled>Delete Selected Cube</button>
+                    <button id="btn-delete-all-old" class="btn btn-danger" disabled>Delete All Old Versions</button>
+                </div>
+
+                <div id="deletion-progress" class="progress-container hidden">
+                    <div class="progress-bar">
+                        <div id="deletion-progress-fill" class="progress-fill"></div>
+                    </div>
+                    <p id="deletion-status" class="status-text"></p>
+                </div>
+
+                <div id="deletion-log" class="log-container hidden">
+                    <h3>Deletion Log</h3>
+                    <pre id="log-content"></pre>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>LINDAS Cube Version Cleanup - Demo Tool</p>
+        <p class="small">Preserves the newest 2 versions of each cube, deletes older versions</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "lindas-cube-cleanup",
+  "version": "1.0.0",
+  "description": "Web interface for LINDAS cube version cleanup - Demo tool for deleting old cube versions while preserving the newest 2",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0",
+    "n3": "^1.17.2"
+  },
+  "author": "Giulio V",
+  "license": "MIT"
+}
