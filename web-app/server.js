@@ -6,6 +6,15 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Backup directory
+const BACKUP_DIR = path.join(__dirname, 'backups');
+const BACKUP_RETENTION_DAYS = 7;
+
+// Ensure backup directory exists
+if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+}
+
 // Middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -339,7 +348,7 @@ app.post('/api/cubes/list-versions', async (req, res) => {
             `;
         }
 
-        query = query.replace(/<GRAPH_URI>/g, graphUri);
+        query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
         const result = await executeSparqlSelect(sparqlEndpoint, query);
         res.json(result);
@@ -376,7 +385,7 @@ app.post('/api/cubes/count-versions', async (req, res) => {
             `;
         }
 
-        query = query.replace(/<GRAPH_URI>/g, graphUri);
+        query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
         const result = await executeSparqlSelect(sparqlEndpoint, query);
         res.json(result);
@@ -438,7 +447,7 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
             `;
         }
 
-        query = query.replace(/<GRAPH_URI>/g, graphUri);
+        query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
         const result = await executeSparqlSelect(sparqlEndpoint, query);
         res.json(result);
@@ -512,10 +521,10 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
     }
 });
 
-// Delete observations (chunked) - Query 07
+// Delete observations - Query 07
 app.post('/api/cubes/delete-observations', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri, chunkSize = 50000 } = req.body;
+        const { endpoint, dataset, graphUri, cubeUri } = req.body;
         const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
 
         const query = `
@@ -533,11 +542,10 @@ app.post('/api/cubes/delete-observations', async (req, res) => {
                     ?obs ?p ?o .
                 }
             }
-            LIMIT ${chunkSize}
         `;
 
         await executeSparqlUpdate(updateEndpoint, query);
-        res.json({ success: true, message: `Deleted up to ${chunkSize} observation triples` });
+        res.json({ success: true, message: 'Deleted observation triples' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -716,9 +724,287 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
     }
 });
 
+// ========== BACKUP AND RESTORE API ==========
+
+// Clean up old backups (older than BACKUP_RETENTION_DAYS)
+function cleanupOldBackups() {
+    const now = Date.now();
+    const maxAge = BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+    try {
+        const files = fs.readdirSync(BACKUP_DIR);
+        for (const file of files) {
+            if (file.endsWith('.json')) {
+                const filePath = path.join(BACKUP_DIR, file);
+                const stats = fs.statSync(filePath);
+                if (now - stats.mtimeMs > maxAge) {
+                    // Delete the metadata file and its associated .nt file
+                    fs.unlinkSync(filePath);
+                    const ntFile = filePath.replace('.json', '.nt');
+                    if (fs.existsSync(ntFile)) {
+                        fs.unlinkSync(ntFile);
+                    }
+                    console.log(`Cleaned up old backup: ${file}`);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error cleaning up old backups:', error);
+    }
+}
+
+// Run cleanup on startup and every hour
+cleanupOldBackups();
+setInterval(cleanupOldBackups, 60 * 60 * 1000);
+
+// Create backup before deletion
+app.post('/api/backup/create', async (req, res) => {
+    try {
+        const { endpoint, dataset, graphUri, cubeUri } = req.body;
+        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+
+        // CONSTRUCT query to get all triples for the cube
+        const query = `
+            PREFIX cube: <https://cube.link/>
+            PREFIX sh: <http://www.w3.org/ns/shacl#>
+            PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+            CONSTRUCT {
+                ?s ?p ?o .
+            }
+            WHERE {
+                GRAPH <${graphUri}> {
+                    {
+                        <${cubeUri}> ?p ?o .
+                        BIND(<${cubeUri}> AS ?s)
+                    }
+                    UNION
+                    {
+                        <${cubeUri}> ?p1 ?bn .
+                        FILTER(isBlank(?bn))
+                        ?bn ?p ?o .
+                        BIND(?bn AS ?s)
+                    }
+                    UNION
+                    {
+                        <${cubeUri}> cube:observationConstraint ?shape .
+                        ?shape ?p ?o .
+                        BIND(?shape AS ?s)
+                    }
+                    UNION
+                    {
+                        <${cubeUri}> cube:observationConstraint ?shape .
+                        ?shape sh:property ?propShape .
+                        ?propShape ?p ?o .
+                        BIND(?propShape AS ?s)
+                    }
+                    UNION
+                    {
+                        <${cubeUri}> cube:observationConstraint ?shape .
+                        ?shape sh:property ?propShape .
+                        ?propShape sh:in ?list .
+                        ?list rdf:rest*/rdf:first ?item .
+                        ?list ?p ?o .
+                        BIND(?list AS ?s)
+                    }
+                    UNION
+                    {
+                        <${cubeUri}> cube:observationSet ?obsSet .
+                        ?obsSet ?p ?o .
+                        BIND(?obsSet AS ?s)
+                    }
+                    UNION
+                    {
+                        <${cubeUri}> cube:observationSet ?obsSet .
+                        ?obsSet cube:observation ?obs .
+                        ?obs ?p ?o .
+                        BIND(?obs AS ?s)
+                    }
+                }
+            }
+        `;
+
+        const headers = {
+            'Accept': 'application/n-triples',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        };
+
+        const response = await fetch(sparqlEndpoint, {
+            method: 'POST',
+            headers: headers,
+            body: `query=${encodeURIComponent(query)}`
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Backup query failed: ${response.status} - ${text}`);
+        }
+
+        const triples = await response.text();
+        const tripleCount = triples.split('\n').filter(line => line.trim()).length;
+
+        // Generate backup ID and filename
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const cubeName = cubeUri.split('/').slice(-2).join('_');
+        const backupId = `${cubeName}_${timestamp}`;
+        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
+
+        // Save triples
+        fs.writeFileSync(ntFilePath, triples);
+
+        // Save metadata
+        const metadata = {
+            backupId: backupId,
+            cubeUri: cubeUri,
+            graphUri: graphUri,
+            endpoint: endpoint,
+            dataset: dataset,
+            tripleCount: tripleCount,
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
+        };
+        fs.writeFileSync(metaFilePath, JSON.stringify(metadata, null, 2));
+
+        res.json({
+            success: true,
+            backupId: backupId,
+            tripleCount: tripleCount,
+            expiresAt: metadata.expiresAt
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// List all backups
+app.get('/api/backup/list', (req, res) => {
+    try {
+        cleanupOldBackups(); // Clean up before listing
+
+        const files = fs.readdirSync(BACKUP_DIR);
+        const backups = [];
+
+        for (const file of files) {
+            if (file.endsWith('.json')) {
+                const filePath = path.join(BACKUP_DIR, file);
+                const metadata = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+
+                // Check if the .nt file exists
+                const ntFile = filePath.replace('.json', '.nt');
+                if (fs.existsSync(ntFile)) {
+                    const stats = fs.statSync(ntFile);
+                    metadata.fileSize = stats.size;
+                    backups.push(metadata);
+                }
+            }
+        }
+
+        // Sort by creation date (newest first)
+        backups.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+        res.json({ backups: backups });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get backup details
+app.get('/api/backup/:backupId', (req, res) => {
+    try {
+        const { backupId } = req.params;
+        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
+
+        if (!fs.existsSync(metaFilePath)) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+
+        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+
+        if (fs.existsSync(ntFilePath)) {
+            const stats = fs.statSync(ntFilePath);
+            metadata.fileSize = stats.size;
+        }
+
+        res.json(metadata);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Restore from backup
+app.post('/api/backup/restore', async (req, res) => {
+    try {
+        const { backupId, endpoint, dataset } = req.body;
+        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
+        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+
+        if (!fs.existsSync(metaFilePath) || !fs.existsSync(ntFilePath)) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+
+        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+        const triples = fs.readFileSync(ntFilePath, 'utf8');
+
+        // Import triples back to Fuseki
+        const fusekiEndpoint = endpoint || metadata.endpoint;
+        const fusekiDataset = dataset || metadata.dataset;
+        const dataEndpoint = `${fusekiEndpoint}/${fusekiDataset}/data`;
+
+        const response = await fetch(`${dataEndpoint}?graph=${encodeURIComponent(metadata.graphUri)}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/n-triples'
+            },
+            body: triples
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Restore failed: ${response.status} - ${text}`);
+        }
+
+        res.json({
+            success: true,
+            restoredTriples: metadata.tripleCount,
+            cubeUri: metadata.cubeUri,
+            graphUri: metadata.graphUri
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete a backup
+app.delete('/api/backup/:backupId', (req, res) => {
+    try {
+        const { backupId } = req.params;
+        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
+        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+
+        if (!fs.existsSync(metaFilePath)) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+
+        if (fs.existsSync(metaFilePath)) {
+            fs.unlinkSync(metaFilePath);
+        }
+        if (fs.existsSync(ntFilePath)) {
+            fs.unlinkSync(ntFilePath);
+        }
+
+        res.json({ success: true, message: 'Backup deleted' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`LINDAS Cube Cleanup Demo Server running on http://localhost:${PORT}`);
     console.log(`Fuseki expected at: ${DEFAULT_FUSEKI_ENDPOINT}`);
     console.log(`LINDAS endpoint: ${LINDAS_ENDPOINT}`);
+    console.log(`Backup directory: ${BACKUP_DIR}`);
+    console.log(`Backup retention: ${BACKUP_RETENTION_DAYS} days`);
 });

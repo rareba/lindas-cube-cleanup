@@ -25,6 +25,8 @@
         <button class="tab-btn" data-tab="import">2. Import Data</button>
         <button class="tab-btn" data-tab="explore">3. Explore Cubes</button>
         <button class="tab-btn" data-tab="cleanup">4. Cleanup</button>
+        <button class="tab-btn" data-tab="backups">5. Backups</button>
+        <button class="tab-btn" data-tab="docs">6. Documentation</button>
     </nav>
 
     <main>
@@ -218,6 +220,288 @@
                 <div id="deletion-log" class="log-container hidden">
                     <h3>Deletion Log</h3>
                     <pre id="log-content"></pre>
+                </div>
+            </div>
+
+            <div class="card" id="deletion-summary-card" style="display: none;">
+                <h2>Deletion Summary</h2>
+                <div id="deletion-summary" class="summary-container">
+                    <div class="summary-header">
+                        <div class="summary-icon success-icon">&#10003;</div>
+                        <div class="summary-title">
+                            <h3>Cleanup Complete</h3>
+                            <p id="summary-timestamp"></p>
+                        </div>
+                    </div>
+                    <div class="summary-stats">
+                        <div class="stat-card">
+                            <div class="stat-value" id="summary-versions-deleted">0</div>
+                            <div class="stat-label">Versions Deleted</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="summary-triples-deleted">0</div>
+                            <div class="stat-label">Triples Removed</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="summary-versions-kept">0</div>
+                            <div class="stat-label">Versions Kept</div>
+                        </div>
+                    </div>
+                    <div class="summary-details">
+                        <h4>Deleted Versions</h4>
+                        <div id="summary-deleted-list" class="deleted-list"></div>
+                        <h4>Preserved Versions</h4>
+                        <div id="summary-kept-list" class="kept-list"></div>
+                    </div>
+                    <div class="summary-actions">
+                        <p class="backup-notice">A backup was created and will be available for 7 days.</p>
+                        <button id="btn-view-backup" class="btn btn-secondary">View Backup</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Backups Tab -->
+        <section id="backups" class="tab-content">
+            <div class="card">
+                <h2>Backup Management</h2>
+                <p class="description">View and restore deleted cube versions. Backups are automatically deleted after 7 days.</p>
+
+                <button id="btn-refresh-backups" class="btn btn-primary">Refresh Backup List</button>
+
+                <div id="backup-list-container" class="table-container">
+                    <p class="placeholder-text">Click "Refresh Backup List" to see available backups</p>
+                </div>
+            </div>
+
+            <div class="card" id="restore-preview-card" style="display: none;">
+                <h2>Restore Preview</h2>
+                <p class="description">Review the backup before restoring.</p>
+
+                <div id="restore-preview-info" class="info-box"></div>
+
+                <div class="button-group">
+                    <button id="btn-restore-backup" class="btn btn-primary">Restore This Backup</button>
+                    <button id="btn-delete-backup" class="btn btn-danger">Delete Backup</button>
+                </div>
+
+                <div id="restore-progress" class="progress-container hidden">
+                    <div class="progress-bar">
+                        <div id="restore-progress-fill" class="progress-fill"></div>
+                    </div>
+                    <p id="restore-status" class="status-text"></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Documentation Tab -->
+        <section id="docs" class="tab-content">
+            <div class="card">
+                <h2>How the Cleanup Process Works</h2>
+                <p class="description">This page explains the SPARQL queries and logic used to identify and delete old cube versions.</p>
+            </div>
+
+            <div class="card">
+                <h2>Step 1: Version Detection</h2>
+                <div class="doc-section">
+                    <h3>Understanding Cube URIs</h3>
+                    <p>LINDAS cubes follow a versioned URI pattern:</p>
+                    <pre class="code-block">https://energy.ld.admin.ch/sfoe/{cube_name}/{version_number}</pre>
+                    <p>For example:</p>
+                    <ul class="doc-list">
+                        <li><code>...bfe_ogd18_gebaeudeprogramm_co2wirkung/7</code> - Version 7</li>
+                        <li><code>...bfe_ogd18_gebaeudeprogramm_co2wirkung/1</code> - Version 1</li>
+                    </ul>
+
+                    <h3>Version Extraction Query</h3>
+                    <p>The system extracts version numbers using regex pattern matching:</p>
+                    <pre class="code-block sparql">BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?version)
+BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?baseCube)</pre>
+                    <p><strong>Logic:</strong> The regex captures the numeric suffix as the version and everything before it as the base cube identifier.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Step 2: Version Counting</h2>
+                <div class="doc-section">
+                    <h3>Grouping by Base Cube</h3>
+                    <p>All cube versions are grouped by their base URI to count how many versions exist:</p>
+                    <pre class="code-block sparql">SELECT ?baseCube (COUNT(DISTINCT ?cube) AS ?versionCount)
+WHERE {
+  ?cube a cube:Cube .
+  # ... version extraction ...
+}
+GROUP BY ?baseCube
+HAVING (COUNT(DISTINCT ?cube) > 2)</pre>
+                    <p><strong>Logic:</strong> The <code>HAVING</code> clause filters to show only cubes with more than 2 versions (cleanup candidates).</p>
+
+                    <div class="example-box">
+                        <h4>Example Result</h4>
+                        <table class="doc-table">
+                            <tr><th>Base Cube</th><th>Version Count</th><th>Action</th></tr>
+                            <tr><td>co2wirkung</td><td>7</td><td>Needs cleanup</td></tr>
+                            <tr><td>other_cube</td><td>2</td><td>OK (not shown)</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Step 3: Ranking Algorithm</h2>
+                <div class="doc-section">
+                    <h3>How Versions Are Ranked</h3>
+                    <p>The core algorithm determines which versions to keep or delete:</p>
+                    <pre class="code-block">Rank = (Number of newer versions) + 1</pre>
+
+                    <div class="ranking-visual">
+                        <h4>Ranking Example (7 versions)</h4>
+                        <table class="doc-table ranking-table">
+                            <tr><th>Version</th><th>Newer Versions</th><th>Rank</th><th>Action</th></tr>
+                            <tr class="keep-row"><td>7</td><td>0</td><td>1</td><td class="action-keep">KEEP</td></tr>
+                            <tr class="keep-row"><td>6</td><td>1 (v7)</td><td>2</td><td class="action-keep">KEEP</td></tr>
+                            <tr class="delete-row"><td>5</td><td>2 (v6, v7)</td><td>3</td><td class="action-delete">DELETE</td></tr>
+                            <tr class="delete-row"><td>4</td><td>3</td><td>4</td><td class="action-delete">DELETE</td></tr>
+                            <tr class="delete-row"><td>3</td><td>4</td><td>5</td><td class="action-delete">DELETE</td></tr>
+                            <tr class="delete-row"><td>2</td><td>5</td><td>6</td><td class="action-delete">DELETE</td></tr>
+                            <tr class="delete-row"><td>1</td><td>6</td><td>7</td><td class="action-delete">DELETE</td></tr>
+                        </table>
+                    </div>
+
+                    <h3>SPARQL Implementation</h3>
+                    <pre class="code-block sparql">SELECT ?cube ?version (COUNT(?newerCube) + 1 AS ?rank)
+WHERE {
+  ?cube a cube:Cube .
+  OPTIONAL {
+    ?newerCube a cube:Cube .
+    FILTER(?newerBaseCube = ?baseCube && ?newerVersion > ?version)
+  }
+}
+GROUP BY ?cube ?version
+HAVING ((COUNT(?newerCube) + 1) > 2)  -- Only return DELETE candidates</pre>
+                    <p><strong>Logic:</strong> For each cube, count how many other cubes of the same base have a higher version number. Add 1 to get the rank. Versions with rank > 2 are marked for deletion.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Step 4: Deletion Process</h2>
+                <div class="doc-section">
+                    <h3>Cube Structure</h3>
+                    <p>A cube consists of multiple components that must all be deleted:</p>
+                    <div class="structure-diagram">
+                        <pre class="code-block">cube:Cube
+  +-- Metadata (title, dates, creator)
+  |     +-- Blank nodes (nested properties)
+  |
+  +-- cube:observationConstraint --> SHACL Shape
+  |     +-- sh:property --> Property shapes
+  |           +-- sh:in --> RDF lists
+  |
+  +-- cube:observationSet --> Observation container
+        +-- cube:observation --> Data points (many)</pre>
+                    </div>
+
+                    <h3>Three-Step Chunked Deletion</h3>
+                    <p>To avoid timeouts with large cubes, deletion is performed in three steps:</p>
+
+                    <div class="deletion-steps">
+                        <div class="deletion-step">
+                            <div class="step-badge">1</div>
+                            <div class="step-detail">
+                                <h4>Delete Observations</h4>
+                                <p>Remove observation data in chunks of 50,000 triples. Repeat until all observations are deleted.</p>
+                                <pre class="code-block sparql">DELETE { ?obs ?p ?o }
+WHERE {
+  &lt;cubeUri&gt; cube:observationSet/cube:observation ?obs .
+  ?obs ?p ?o .
+} LIMIT 50000</pre>
+                            </div>
+                        </div>
+
+                        <div class="deletion-step">
+                            <div class="step-badge">2</div>
+                            <div class="step-detail">
+                                <h4>Delete Observation Links</h4>
+                                <p>Remove the <code>cube:observation</code> property connections.</p>
+                                <pre class="code-block sparql">DELETE { ?set cube:observation ?obs }
+WHERE {
+  &lt;cubeUri&gt; cube:observationSet ?set .
+  ?set cube:observation ?obs .
+}</pre>
+                            </div>
+                        </div>
+
+                        <div class="deletion-step">
+                            <div class="step-badge">3</div>
+                            <div class="step-detail">
+                                <h4>Delete Metadata and Shapes</h4>
+                                <p>Remove cube metadata, SHACL shapes, and the observation set container.</p>
+                                <pre class="code-block sparql">DELETE { ?s ?p ?o }
+WHERE {
+  { &lt;cubeUri&gt; ?p ?o . BIND(&lt;cubeUri&gt; AS ?s) }
+  UNION
+  { &lt;cubeUri&gt; cube:observationConstraint ?shape . ?shape ?p ?o . BIND(?shape AS ?s) }
+  UNION
+  { ... property shapes, blank nodes, etc. }
+}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Step 5: Backup and Rollback</h2>
+                <div class="doc-section">
+                    <h3>Automatic Backup</h3>
+                    <p>Before deletion, the system automatically creates a backup:</p>
+                    <ol class="doc-list numbered">
+                        <li>Export all triples for the cube using a CONSTRUCT query</li>
+                        <li>Save as N-Triples file with timestamp</li>
+                        <li>Store metadata (cube URI, graph, deletion date)</li>
+                    </ol>
+
+                    <h3>Restore Process</h3>
+                    <p>To restore a deleted cube:</p>
+                    <ol class="doc-list numbered">
+                        <li>Load the backup N-Triples file</li>
+                        <li>Re-import into the original graph</li>
+                        <li>Verify restoration with a count query</li>
+                    </ol>
+
+                    <h3>Retention Policy</h3>
+                    <p>Backups are automatically deleted after <strong>7 days</strong> to manage storage.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Query Flow Diagram</h2>
+                <div class="doc-section">
+                    <div class="flow-diagram">
+                        <div class="flow-step">
+                            <div class="flow-box">List All Versions<br><small>Query 01</small></div>
+                            <div class="flow-arrow">&#8595;</div>
+                        </div>
+                        <div class="flow-step">
+                            <div class="flow-box">Count Per Cube<br><small>Query 02</small></div>
+                            <div class="flow-arrow">&#8595;</div>
+                        </div>
+                        <div class="flow-step">
+                            <div class="flow-box">Rank & Identify<br><small>Query 03</small></div>
+                            <div class="flow-arrow">&#8595;</div>
+                        </div>
+                        <div class="flow-step flow-branch">
+                            <div class="flow-box-left">Create Backup<br><small>CONSTRUCT</small></div>
+                            <div class="flow-box-right">Preview Triples<br><small>COUNT</small></div>
+                        </div>
+                        <div class="flow-step">
+                            <div class="flow-arrow">&#8595;</div>
+                            <div class="flow-box danger">Execute Deletion<br><small>3-Step DELETE</small></div>
+                            <div class="flow-arrow">&#8595;</div>
+                        </div>
+                        <div class="flow-step">
+                            <div class="flow-box success">Verify & Summary</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>

@@ -10,7 +10,17 @@ const state = {
     availableCubes: [],
     selectedCubes: new Set(),
     cubesToDelete: [],
-    selectedCubeForDeletion: null
+    selectedCubeForDeletion: null,
+    // Deletion tracking
+    deletionResults: {
+        deletedCubes: [],
+        keptCubes: [],
+        totalTriplesDeleted: 0,
+        backupIds: []
+    },
+    // Backup management
+    selectedBackupId: null,
+    backups: []
 };
 
 // DOM Elements
@@ -80,6 +90,12 @@ function initEventListeners() {
     document.getElementById('btn-identify-deletions').addEventListener('click', identifyDeletions);
     document.getElementById('btn-delete-selected').addEventListener('click', deleteSelectedCube);
     document.getElementById('btn-delete-all-old').addEventListener('click', deleteAllOldVersions);
+    document.getElementById('btn-view-backup').addEventListener('click', viewLatestBackup);
+
+    // Backup tab
+    document.getElementById('btn-refresh-backups').addEventListener('click', loadBackupList);
+    document.getElementById('btn-restore-backup').addEventListener('click', restoreBackup);
+    document.getElementById('btn-delete-backup').addEventListener('click', deleteBackup);
 
     // Sync inputs
     elements.lindasGraph.addEventListener('change', syncGraphInputs);
@@ -490,13 +506,19 @@ async function identifyDeletions() {
         });
 
         if (result.results.bindings.length === 0) {
-            previewContainer.innerHTML = '<p class="placeholder-text">No cubes found</p>';
+            previewContainer.innerHTML = '<p class="placeholder-text">No cubes found with more than 2 versions</p>';
             return;
         }
 
-        // Separate keep and delete
-        const keepCubes = result.results.bindings.filter(r => r.action?.value === 'KEEP');
-        const deleteCubes = result.results.bindings.filter(r => r.action?.value === 'DELETE');
+        // All returned rows are DELETE candidates (rank > 2)
+        // Derive action from rank: rank <= 2 = KEEP, rank > 2 = DELETE
+        const processedResults = result.results.bindings.map(row => ({
+            ...row,
+            action: { value: parseInt(row.rank?.value || 0) > 2 ? 'DELETE' : 'KEEP' }
+        }));
+
+        const keepCubes = processedResults.filter(r => r.action.value === 'KEEP');
+        const deleteCubes = processedResults.filter(r => r.action.value === 'DELETE');
 
         state.cubesToDelete = deleteCubes;
 
@@ -511,14 +533,14 @@ async function identifyDeletions() {
                     </tr>
                 </thead>
                 <tbody>
-                    ${result.results.bindings.map(row => `
+                    ${processedResults.map(row => `
                         <tr>
                             <td class="mono">${row.baseCube?.value.split('/').pop() || ''}</td>
                             <td>${row.version?.value || ''}</td>
                             <td>${row.rank?.value || ''}</td>
                             <td>
-                                <span class="badge ${row.action?.value === 'KEEP' ? 'badge-keep' : 'badge-delete'}">
-                                    ${row.action?.value || ''}
+                                <span class="badge ${row.action.value === 'KEEP' ? 'badge-keep' : 'badge-delete'}">
+                                    ${row.action.value}
                                 </span>
                             </td>
                         </tr>
@@ -526,7 +548,7 @@ async function identifyDeletions() {
                 </tbody>
             </table>
             <div class="info-box" style="margin-top: 1rem;">
-                <strong>Summary:</strong> ${keepCubes.length} versions to keep, ${deleteCubes.length} versions to delete
+                <strong>Summary:</strong> ${deleteCubes.length} versions to delete (keeping newest 2 per cube)
             </div>
         `;
 
@@ -663,7 +685,7 @@ async function deleteAllOldVersions() {
         return;
     }
 
-    if (!confirm(`Are you sure you want to delete ${cubes.length} old cube versions?\n\nThis action cannot be undone.`)) {
+    if (!confirm(`Are you sure you want to delete ${cubes.length} old cube versions?\n\nBackups will be created automatically.`)) {
         return;
     }
 
@@ -677,14 +699,50 @@ async function deleteAllOldVersions() {
     logContainer.classList.remove('hidden');
     logContent.textContent = '';
 
+    // Reset deletion results
+    state.deletionResults = {
+        deletedCubes: [],
+        keptCubes: [],
+        totalTriplesDeleted: 0,
+        backupIds: [],
+        timestamp: new Date().toISOString()
+    };
+
     let deleted = 0;
+    const totalSteps = cubes.length * 2; // backup + delete for each
+
     for (const cubeUri of cubes) {
-        statusText.textContent = `Deleting ${cubeUri.split('/').slice(-2).join('/')}...`;
-        progressFill.style.width = `${(deleted / cubes.length) * 100}%`;
+        const cubeName = cubeUri.split('/').slice(-2).join('/');
+
+        // Step 1: Create backup
+        statusText.textContent = `Creating backup for ${cubeName}...`;
+        progressFill.style.width = `${((deleted * 2) / totalSteps) * 100}%`;
+        logContent.textContent += `[INFO] Creating backup for ${cubeUri}...\n`;
 
         try {
+            const backupResult = await createBackup(cubeUri);
+            state.deletionResults.backupIds.push(backupResult.backupId);
+            logContent.textContent += `[OK] Backup created: ${backupResult.backupId} (${backupResult.tripleCount} triples)\n`;
+        } catch (error) {
+            logContent.textContent += `[WARN] Backup failed: ${error.message} - proceeding with deletion\n`;
+        }
+
+        // Step 2: Delete
+        statusText.textContent = `Deleting ${cubeName}...`;
+        progressFill.style.width = `${((deleted * 2 + 1) / totalSteps) * 100}%`;
+
+        try {
+            const triplesBefore = await getTripleCount(cubeUri);
             await deleteCubeInternal(cubeUri, logContent);
             deleted++;
+
+            state.deletionResults.deletedCubes.push({
+                uri: cubeUri,
+                name: cubeName,
+                triples: triplesBefore
+            });
+            state.deletionResults.totalTriplesDeleted += triplesBefore;
+
             logContent.textContent += `[OK] Deleted: ${cubeUri}\n`;
         } catch (error) {
             logContent.textContent += `[ERROR] Failed to delete ${cubeUri}: ${error.message}\n`;
@@ -694,8 +752,127 @@ async function deleteAllOldVersions() {
     progressFill.style.width = '100%';
     statusText.textContent = `Deleted ${deleted} of ${cubes.length} cube versions`;
 
+    // Get remaining (kept) versions
+    try {
+        const listResult = await api('/cubes/list-versions', {
+            endpoint: state.fusekiEndpoint,
+            dataset: state.fusekiDataset,
+            graphUri: elements.cleanupGraph.value
+        });
+        state.deletionResults.keptCubes = listResult.results.bindings.map(row => ({
+            uri: row.cube?.value || '',
+            name: row.cube?.value.split('/').slice(-2).join('/') || '',
+            version: row.version?.value || ''
+        }));
+    } catch (error) {
+        console.error('Failed to get kept versions:', error);
+    }
+
+    // Show deletion summary
+    showDeletionSummary();
+
     // Refresh the deletion preview
     await identifyDeletions();
+}
+
+// Get triple count for a cube (for summary)
+async function getTripleCount(cubeUri) {
+    try {
+        const result = await api('/cubes/preview-deletion', {
+            endpoint: state.fusekiEndpoint,
+            dataset: state.fusekiDataset,
+            graphUri: elements.cleanupGraph.value,
+            cubeUri: cubeUri
+        });
+        const data = result.results.bindings[0] || {};
+        const meta = parseInt(data.metaTriples?.value || 0);
+        const shapes = parseInt(data.shapeTriples?.value || 0);
+        const obs = parseInt(data.observationTriples?.value || 0);
+        return meta + shapes + obs;
+    } catch (error) {
+        return 0;
+    }
+}
+
+// Create backup for a cube
+async function createBackup(cubeUri) {
+    const response = await fetch('/api/backup/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            endpoint: state.fusekiEndpoint,
+            dataset: state.fusekiDataset,
+            graphUri: elements.cleanupGraph.value,
+            cubeUri: cubeUri
+        })
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Backup failed');
+    }
+
+    return await response.json();
+}
+
+// Show deletion summary
+function showDeletionSummary() {
+    const summaryCard = document.getElementById('deletion-summary-card');
+    summaryCard.style.display = 'block';
+
+    // Update timestamp
+    document.getElementById('summary-timestamp').textContent =
+        `Completed at ${new Date(state.deletionResults.timestamp).toLocaleString()}`;
+
+    // Update stats
+    document.getElementById('summary-versions-deleted').textContent =
+        state.deletionResults.deletedCubes.length;
+    document.getElementById('summary-triples-deleted').textContent =
+        state.deletionResults.totalTriplesDeleted.toLocaleString();
+    document.getElementById('summary-versions-kept').textContent =
+        state.deletionResults.keptCubes.length;
+
+    // Update deleted list
+    const deletedList = document.getElementById('summary-deleted-list');
+    if (state.deletionResults.deletedCubes.length === 0) {
+        deletedList.innerHTML = '<p class="placeholder-text">No versions deleted</p>';
+    } else {
+        deletedList.innerHTML = state.deletionResults.deletedCubes.map(cube => `
+            <div class="summary-item deleted">
+                <span class="summary-item-icon">&#10005;</span>
+                <div class="summary-item-content">
+                    <div class="summary-item-name">${cube.name}</div>
+                    <div class="summary-item-detail">${cube.triples.toLocaleString()} triples removed</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // Update kept list
+    const keptList = document.getElementById('summary-kept-list');
+    if (state.deletionResults.keptCubes.length === 0) {
+        keptList.innerHTML = '<p class="placeholder-text">No versions remaining</p>';
+    } else {
+        keptList.innerHTML = state.deletionResults.keptCubes.map(cube => `
+            <div class="summary-item kept">
+                <span class="summary-item-icon">&#10003;</span>
+                <div class="summary-item-content">
+                    <div class="summary-item-name">${cube.name}</div>
+                    <div class="summary-item-detail">Version ${cube.version} preserved</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // Scroll to summary
+    summaryCard.scrollIntoView({ behavior: 'smooth' });
+}
+
+// View latest backup (from summary)
+function viewLatestBackup() {
+    // Switch to backups tab
+    document.querySelector('[data-tab="backups"]').click();
+    loadBackupList();
 }
 
 async function deleteCube(cubeUri) {
@@ -773,4 +950,208 @@ async function deleteCubeInternal(cubeUri, logEl) {
     });
 
     logEl.textContent += `[INFO] Cube deletion complete\n`;
+}
+
+// ========== BACKUP MANAGEMENT ==========
+
+// Load backup list
+async function loadBackupList() {
+    const container = document.getElementById('backup-list-container');
+    container.innerHTML = '<p class="placeholder-text">Loading backups...</p>';
+
+    try {
+        const response = await fetch('/api/backup/list');
+        const data = await response.json();
+
+        state.backups = data.backups || [];
+
+        if (state.backups.length === 0) {
+            container.innerHTML = '<p class="placeholder-text">No backups available</p>';
+            document.getElementById('restore-preview-card').style.display = 'none';
+            return;
+        }
+
+        container.innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>Cube</th>
+                        <th>Created</th>
+                        <th>Expires</th>
+                        <th>Triples</th>
+                        <th>Size</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${state.backups.map(backup => `
+                        <tr class="${isBackupExpiringSoon(backup.expiresAt) ? 'expiring-soon' : ''}">
+                            <td class="mono">${backup.cubeUri.split('/').slice(-2).join('/')}</td>
+                            <td>${formatDate(backup.createdAt)}</td>
+                            <td>${formatDate(backup.expiresAt)}</td>
+                            <td>${backup.tripleCount.toLocaleString()}</td>
+                            <td>${formatFileSize(backup.fileSize)}</td>
+                            <td>
+                                <button class="btn btn-small btn-primary" onclick="selectBackup('${backup.backupId}')">
+                                    Select
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (error) {
+        container.innerHTML = `<p class="placeholder-text" style="color: var(--danger-color)">Error: ${error.message}</p>`;
+    }
+}
+
+// Check if backup is expiring within 2 days
+function isBackupExpiringSoon(expiresAt) {
+    const expiry = new Date(expiresAt);
+    const now = new Date();
+    const twoDays = 2 * 24 * 60 * 60 * 1000;
+    return (expiry - now) < twoDays;
+}
+
+// Format date for display
+function formatDate(isoDate) {
+    const date = new Date(isoDate);
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Format file size
+function formatFileSize(bytes) {
+    if (!bytes) return 'Unknown';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Select a backup for preview/restore
+function selectBackup(backupId) {
+    state.selectedBackupId = backupId;
+    const backup = state.backups.find(b => b.backupId === backupId);
+
+    if (!backup) {
+        alert('Backup not found');
+        return;
+    }
+
+    const previewCard = document.getElementById('restore-preview-card');
+    const previewInfo = document.getElementById('restore-preview-info');
+
+    previewCard.style.display = 'block';
+    previewInfo.classList.remove('hidden');
+    previewInfo.classList.add('info');
+
+    previewInfo.innerHTML = `
+        <h3>Backup Details</h3>
+        <table class="detail-table">
+            <tr><th>Backup ID:</th><td class="mono">${backup.backupId}</td></tr>
+            <tr><th>Cube URI:</th><td class="mono">${backup.cubeUri}</td></tr>
+            <tr><th>Graph:</th><td class="mono">${backup.graphUri}</td></tr>
+            <tr><th>Triple Count:</th><td>${backup.tripleCount.toLocaleString()}</td></tr>
+            <tr><th>File Size:</th><td>${formatFileSize(backup.fileSize)}</td></tr>
+            <tr><th>Created:</th><td>${formatDate(backup.createdAt)}</td></tr>
+            <tr><th>Expires:</th><td>${formatDate(backup.expiresAt)}</td></tr>
+        </table>
+        <p class="warning-text">Restoring this backup will re-import ${backup.tripleCount.toLocaleString()} triples into the graph.</p>
+    `;
+
+    previewCard.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Restore from backup
+async function restoreBackup() {
+    if (!state.selectedBackupId) {
+        alert('Please select a backup first');
+        return;
+    }
+
+    if (!confirm('Are you sure you want to restore this backup? This will re-import the deleted cube data.')) {
+        return;
+    }
+
+    const progressContainer = document.getElementById('restore-progress');
+    const progressFill = document.getElementById('restore-progress-fill');
+    const statusText = document.getElementById('restore-status');
+
+    progressContainer.classList.remove('hidden');
+    progressFill.style.width = '0%';
+    statusText.textContent = 'Restoring backup...';
+
+    try {
+        progressFill.style.width = '30%';
+
+        const response = await fetch('/api/backup/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                backupId: state.selectedBackupId,
+                endpoint: state.fusekiEndpoint,
+                dataset: state.fusekiDataset
+            })
+        });
+
+        progressFill.style.width = '80%';
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Restore failed');
+        }
+
+        const result = await response.json();
+        progressFill.style.width = '100%';
+        statusText.textContent = `Restored ${result.restoredTriples.toLocaleString()} triples successfully!`;
+
+        // Show success message
+        const previewInfo = document.getElementById('restore-preview-info');
+        previewInfo.classList.remove('info');
+        previewInfo.classList.add('success');
+        previewInfo.innerHTML = `
+            <h3>Restore Complete</h3>
+            <p>Successfully restored <strong>${result.restoredTriples.toLocaleString()}</strong> triples for cube:</p>
+            <p class="mono">${result.cubeUri}</p>
+            <p>The cube version is now available in the graph again.</p>
+        `;
+
+    } catch (error) {
+        progressFill.style.width = '100%';
+        progressFill.style.backgroundColor = 'var(--danger-color)';
+        statusText.textContent = `Error: ${error.message}`;
+    }
+}
+
+// Delete a backup
+async function deleteBackup() {
+    if (!state.selectedBackupId) {
+        alert('Please select a backup first');
+        return;
+    }
+
+    if (!confirm('Are you sure you want to delete this backup? This cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/backup/${state.selectedBackupId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Delete failed');
+        }
+
+        // Reset selection and reload list
+        state.selectedBackupId = null;
+        document.getElementById('restore-preview-card').style.display = 'none';
+        await loadBackupList();
+
+        alert('Backup deleted successfully');
+
+    } catch (error) {
+        alert(`Error deleting backup: ${error.message}`);
+    }
 }
