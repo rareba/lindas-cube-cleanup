@@ -20,12 +20,37 @@ if %errorlevel%==0 (
 ) else (
     echo [..] Fuseki not running, starting it...
 
-    :: Check if Fuseki directory exists
+    :: Check if Fuseki directory exists, if not download and setup
     if not exist "%FUSEKI_DIR%\fuseki-server.bat" (
-        echo [ERROR] Fuseki not found at %FUSEKI_DIR%
-        echo Please run scripts\setup-fuseki.ps1 first
-        pause
-        exit /b 1
+        echo [..] Fuseki not installed, downloading...
+
+        :: Create fuseki directory
+        if not exist "%FUSEKI_DIR%" mkdir "%FUSEKI_DIR%"
+
+        :: Download Fuseki using PowerShell
+        echo [..] Downloading Apache Jena Fuseki 5.0.0...
+        powershell -Command "& {$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-5.0.0.zip' -OutFile '%FUSEKI_DIR%\fuseki.zip'}"
+
+        if not exist "%FUSEKI_DIR%\fuseki.zip" (
+            echo [ERROR] Failed to download Fuseki
+            pause
+            exit /b 1
+        )
+
+        :: Extract Fuseki
+        echo [..] Extracting Fuseki...
+        powershell -Command "& {Expand-Archive -Path '%FUSEKI_DIR%\fuseki.zip' -DestinationPath '%FUSEKI_DIR%' -Force}"
+
+        :: Move contents up one level
+        for /d %%i in ("%FUSEKI_DIR%\apache-jena-fuseki-*") do (
+            xcopy /s /e /y "%%i\*" "%FUSEKI_DIR%\" >nul
+            rd /s /q "%%i"
+        )
+
+        :: Clean up zip file
+        del "%FUSEKI_DIR%\fuseki.zip"
+
+        echo [OK] Fuseki installed successfully
     )
 
     :: Start Fuseki in background
@@ -35,14 +60,15 @@ if %errorlevel%==0 (
 
     :: Wait for Fuseki to start
     echo [..] Waiting for Fuseki to start...
-    timeout /t 5 /nobreak >nul
+    timeout /t 8 /nobreak >nul
 
     :: Verify Fuseki started
     netstat -ano | findstr ":3030.*LISTENING" >nul 2>&1
     if %errorlevel%==0 (
         echo [OK] Fuseki started successfully
     ) else (
-        echo [WARNING] Fuseki may still be starting...
+        echo [WARNING] Fuseki may still be starting, waiting more...
+        timeout /t 5 /nobreak >nul
     )
 )
 
