@@ -1,0 +1,60 @@
+# Query 6: DELETE a single cube and all its data
+# PARAMETERS:
+#   - Replace GRAPH_URI with the target graph
+#   - Replace CUBE_URI with the cube to delete
+# WARNING: This is a destructive operation!
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+WITH <GRAPH_URI>
+DELETE {
+  ?cube a cube:Cube ;
+        cube:observationConstraint ?shape ;
+        cube:observationSet ?set ;
+        ?p1 ?metaLevel1 .
+
+  ?metaLevel1 ?p2 ?metaLevel2 .
+
+  ?shape ?shapeP ?shapeO .
+  ?propertyS ?propertyP ?propertyO .
+
+  ?set cube:observation ?observationS .
+  ?set ?setP ?setO .
+  ?observationS ?observationP ?observationO .
+}
+WHERE {
+  BIND(<CUBE_URI> AS ?cube)
+  ?cube rdf:type cube:Cube
+
+  {
+    ?cube ?p1 ?metaLevel1
+    OPTIONAL {
+      ?metaLevel1 ?p2 ?metaLevel2
+      FILTER(isBlank(?metaLevel1))
+    }
+  }
+  UNION
+  {
+    ?cube cube:observationConstraint ?shape .
+    ?shape ?shapeP ?shapeO
+  }
+  UNION
+  {
+    ?cube cube:observationConstraint/sh:property ?property .
+    ?property (<>|!<>)* ?propertyS .
+    ?propertyS ?propertyP ?propertyO
+  }
+  UNION
+  {
+    ?cube cube:observationSet ?set .
+    ?set ?setP ?setO .
+  }
+  UNION
+  {
+    ?cube cube:observationSet ?set .
+    ?set cube:observation ?observationS .
+    ?observationS ?observationP ?observationO
+  }
+}

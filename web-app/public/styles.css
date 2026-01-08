@@ -1237,3 +1237,31 @@ footer .small {
         gap: 1rem;
     }
 }
+
+/* Setup Instructions Styles */
+.setup-steps {
+    margin: 1rem 0;
+}
+
+.setup-steps h4 {
+    color: var(--primary-color);
+    margin: 1.25rem 0 0.5rem 0;
+    font-size: 1rem;
+}
+
+.setup-steps h4:first-child {
+    margin-top: 0;
+}
+
+.doc-table .delete-row {
+    background: #fef2f2;
+}
+
+.doc-section a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.doc-section a:hover {
+    text-decoration: underline;
+}

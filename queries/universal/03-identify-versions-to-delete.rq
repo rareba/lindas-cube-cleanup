@@ -1,0 +1,37 @@
+# Query 3: Identify cube versions to DELETE (all except newest 2)
+# PARAMETER: Replace GRAPH_URI with the target graph
+# Returns versions with rank > 2 (candidates for deletion)
+
+PREFIX cube: <https://cube.link/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?cube ?baseCube ?version ?rank
+WHERE {
+  {
+    SELECT ?cube ?baseCube ?version (COUNT(DISTINCT ?newerCube) + 1 AS ?rank)
+    WHERE {
+      GRAPH <GRAPH_URI> {
+        ?cube a cube:Cube .
+
+        BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?versionStr)
+        BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?versionStr), 0) AS ?version)
+
+        BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?baseCubeStr)
+        BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+$"), IRI(?baseCubeStr), ?cube) AS ?baseCube)
+
+        OPTIONAL {
+          ?newerCube a cube:Cube .
+          BIND(REPLACE(STR(?newerCube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?newerVersionStr)
+          BIND(IF(REGEX(STR(?newerCube), "^.*/[^/]+/[0-9]+$"), xsd:integer(?newerVersionStr), 0) AS ?newerVersion)
+          BIND(REPLACE(STR(?newerCube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?newerBaseCubeStr)
+          BIND(IF(REGEX(STR(?newerCube), "^.*/[^/]+/[0-9]+$"), IRI(?newerBaseCubeStr), ?newerCube) AS ?newerBaseCube)
+
+          FILTER(?newerBaseCube = ?baseCube && ?newerVersion > ?version)
+        }
+      }
+    }
+    GROUP BY ?cube ?baseCube ?version
+  }
+  FILTER(?rank > 2)
+}
+ORDER BY ?baseCube ?rank

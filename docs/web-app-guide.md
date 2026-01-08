@@ -82,6 +82,47 @@ npm install
 3. **Delete Selected**: Delete a specific cube version
 4. **Delete All Old**: Batch delete all identified old versions
 
+### Tab 5: Query Editor
+
+Advanced SPARQL query interface with pre-built templates:
+
+**Read Queries:**
+- **List All Cubes**: View all cubes with version numbers
+- **Count Total Triples**: Get total triple count in graph
+- **Preview Single Cube**: Count components before deletion
+- **Preview Versions to Delete**: See which versions will be deleted (rank > 2)
+
+**Write Queries (DESTRUCTIVE):**
+- **Delete Single Cube Version**: Remove a specific cube version
+- **Delete Old Versions (Keep Newest 2)**: Template for batch deletion
+
+**Browse Buttons**: Load available graphs and cubes from your local Fuseki instance
+
+### Tab 6: Backups
+
+Manage backups created during deletion operations:
+
+1. **Refresh Backup List**: View all available backups
+2. **Select Backup**: Click to see backup details (cube URI, triple count, expiry date)
+3. **Restore Backup**: Re-import deleted cube data from backup
+4. **Delete Backup**: Permanently remove backup file
+
+**Backup Retention**: Backups are automatically deleted after 7 days.
+
+## Standalone SPARQL Queries
+
+For customers who prefer to use SPARQL queries directly without the web application, see:
+
+**[sparql-queries.md](sparql-queries.md)** - Complete collection of all queries with documentation
+
+This includes:
+- List all cube versions
+- Count versions per base cube
+- Preview versions to delete (keeping newest 2)
+- Delete single cube version
+- Backup/export cube data
+- Step-by-step batch deletion process
+
 ## Technical Details
 
 ### Architecture
@@ -89,6 +130,7 @@ npm install
 - **Backend**: Node.js + Express server (`server.js`)
 - **Frontend**: Vanilla HTML/CSS/JavaScript (no framework dependencies)
 - **API Endpoints**: RESTful JSON API for all SPARQL operations
+- **Backup System**: File-based N-Triples backup with 7-day retention
 
 ### API Endpoints
 

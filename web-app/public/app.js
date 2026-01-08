@@ -1679,6 +1679,106 @@ WHERE {
     ?s ?p ?o .
   }
 }`
+    },
+
+    'preview-deletions': {
+        name: 'Preview Versions to Delete (Keep Newest 2)',
+        type: 'select',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX schema: <http://schema.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# Preview which cube versions will be deleted (keeping newest 2 per base cube)
+# Versions with rank > 2 will be marked for deletion
+
+SELECT ?baseCube ?cube ?version ?rank
+       (IF(?rank <= 2, "KEEP", "DELETE") AS ?action)
+WHERE {
+  GRAPH <GRAPH_URI> {
+    ?cube a cube:Cube .
+
+    # Extract version number from URI pattern /baseCube/version
+    BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?versionStr)
+    BIND(IF(REGEX(STR(?cube), "^.*/[0-9]+/?$"), xsd:integer(?versionStr), 0) AS ?version)
+
+    # Extract base cube URI (without version)
+    BIND(REPLACE(STR(?cube), "^(.*)/[0-9]+/?$", "$1") AS ?baseCubeStr)
+    BIND(IF(REGEX(STR(?cube), "^.*/[0-9]+/?$"), IRI(?baseCubeStr), ?cube) AS ?baseCube)
+  }
+
+  # Calculate rank within each base cube (1 = newest)
+  {
+    SELECT ?cube (COUNT(?newerCube) + 1 AS ?rank)
+    WHERE {
+      GRAPH <GRAPH_URI> {
+        ?cube a cube:Cube .
+        BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?vStr)
+        BIND(IF(REGEX(STR(?cube), "^.*/[0-9]+/?$"), xsd:integer(?vStr), 0) AS ?v)
+        BIND(REPLACE(STR(?cube), "^(.*)/[0-9]+/?$", "$1") AS ?baseStr)
+
+        OPTIONAL {
+          ?newerCube a cube:Cube .
+          BIND(REPLACE(STR(?newerCube), "^.*/([0-9]+)/?$", "$1") AS ?nvStr)
+          BIND(IF(REGEX(STR(?newerCube), "^.*/[0-9]+/?$"), xsd:integer(?nvStr), 0) AS ?nv)
+          BIND(REPLACE(STR(?newerCube), "^(.*)/[0-9]+/?$", "$1") AS ?nbaseStr)
+          FILTER(?baseStr = ?nbaseStr && ?nv > ?v)
+        }
+      }
+    }
+    GROUP BY ?cube
+  }
+}
+ORDER BY ?baseCube ?rank`
+    },
+
+    'delete-old-versions': {
+        name: 'Delete All Old Versions (Keep Newest 2) - DESTRUCTIVE!',
+        type: 'update',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# WARNING: This query deletes ALL cube versions except the newest 2 per base cube
+# Make sure to backup data before running!
+
+# This query must be run for EACH cube to delete (replace CUBE_URI)
+# Use "Preview Versions to Delete" first to see which cubes will be affected
+
+WITH <GRAPH_URI>
+DELETE {
+  ?cube ?p1 ?o1 .
+  ?shape ?shapeP ?shapeO .
+  ?prop ?propP ?propO .
+  ?set ?setP ?setO .
+  ?obs ?obsP ?obsO .
+}
+WHERE {
+  # Target cube to delete (versions with rank > 2)
+  BIND(<CUBE_URI> AS ?cube)
+  ?cube rdf:type cube:Cube .
+
+  # Delete cube metadata
+  { ?cube ?p1 ?o1 }
+  UNION
+  # Delete shape constraints
+  { ?cube cube:observationConstraint ?shape .
+    ?shape ?shapeP ?shapeO }
+  UNION
+  # Delete shape properties (recursive)
+  { ?cube cube:observationConstraint/sh:property ?prop .
+    ?prop (<>|!<>)* ?propNode .
+    ?propNode ?propP ?propO .
+    BIND(?propNode AS ?prop) }
+  UNION
+  # Delete observation sets
+  { ?cube cube:observationSet ?set .
+    ?set ?setP ?setO }
+  UNION
+  # Delete observations
+  { ?cube cube:observationSet/cube:observation ?obs .
+    ?obs ?obsP ?obsO }
+}`
     }
 };
 

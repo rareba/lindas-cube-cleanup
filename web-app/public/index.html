@@ -328,10 +328,16 @@
                         <label for="query-template">Query Template:</label>
                         <select id="query-template">
                             <option value="custom">Custom Query</option>
-                            <option value="preview-single">Preview Single Cube (Count Triples)</option>
-                            <option value="delete-single">Delete Single Cube (DESTRUCTIVE!)</option>
-                            <option value="list-cubes">List All Cubes</option>
-                            <option value="count-triples">Count Total Triples in Graph</option>
+                            <optgroup label="Read Queries">
+                                <option value="list-cubes">List All Cubes</option>
+                                <option value="count-triples">Count Total Triples in Graph</option>
+                                <option value="preview-single">Preview Single Cube (Count Components)</option>
+                                <option value="preview-deletions">Preview Versions to Delete (Keep Newest 2)</option>
+                            </optgroup>
+                            <optgroup label="Write Queries (DESTRUCTIVE)">
+                                <option value="delete-single">Delete Single Cube Version</option>
+                                <option value="delete-old-versions">Delete Old Versions (Keep Newest 2)</option>
+                            </optgroup>
                         </select>
                     </div>
 
@@ -613,6 +619,127 @@ WHERE {
                             <div class="flow-box success">Verify & Summary</div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Query Editor Templates</h2>
+                <div class="doc-section">
+                    <p>The Query Editor provides pre-built SPARQL templates for common operations. Select a template from the dropdown to auto-populate the query.</p>
+
+                    <h3>Read Queries (Safe to Run)</h3>
+                    <table class="doc-table">
+                        <tr><th>Template</th><th>Purpose</th><th>When to Use</th></tr>
+                        <tr>
+                            <td><strong>List All Cubes</strong></td>
+                            <td>Shows all cubes with version numbers, grouped by base cube</td>
+                            <td>Initial exploration - see what data exists in your graph</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Count Total Triples</strong></td>
+                            <td>Returns the total number of triples in the graph</td>
+                            <td>Before/after deletion to verify data was removed</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Preview Single Cube</strong></td>
+                            <td>Counts shapes, properties, and observations for one cube</td>
+                            <td>Before deleting - verify you have the right cube</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Preview Versions to Delete</strong></td>
+                            <td>Shows all versions ranked with KEEP/DELETE status</td>
+                            <td>Core cleanup preview - see exactly what will be deleted</td>
+                        </tr>
+                    </table>
+
+                    <h3>Write Queries (Destructive - Use with Caution)</h3>
+                    <table class="doc-table">
+                        <tr><th>Template</th><th>Purpose</th><th>Warning</th></tr>
+                        <tr class="delete-row">
+                            <td><strong>Delete Single Cube</strong></td>
+                            <td>Deletes one specific cube version by URI</td>
+                            <td>Permanently removes all data for that cube version</td>
+                        </tr>
+                        <tr class="delete-row">
+                            <td><strong>Delete All Old Versions</strong></td>
+                            <td>Deletes all cube versions marked DELETE (rank > 2)</td>
+                            <td>Batch operation - review preview first!</td>
+                        </tr>
+                    </table>
+
+                    <h3>Using Templates</h3>
+                    <ol class="doc-list numbered">
+                        <li>Set the <strong>Graph URI</strong> (e.g., <code>https://lindas.admin.ch/sfoe/cube</code>)</li>
+                        <li>For single-cube operations, set the <strong>Cube URI</strong></li>
+                        <li>Select a template from the dropdown</li>
+                        <li>Review the generated query</li>
+                        <li>Click <strong>Run Query</strong> (SELECT) or <strong>Execute Update</strong> (DELETE)</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Setup Instructions</h2>
+                <div class="doc-section">
+                    <h3>Prerequisites</h3>
+                    <ul class="doc-list">
+                        <li><strong>Node.js</strong> v16 or later</li>
+                        <li><strong>Apache Fuseki</strong> v4.x or v5.x</li>
+                        <li>Internet connection (for LINDAS access)</li>
+                    </ul>
+
+                    <h3>Windows Setup</h3>
+                    <div class="setup-steps">
+                        <h4>1. Start Apache Fuseki</h4>
+                        <pre class="code-block">cd fuseki
+.\fuseki-server.bat</pre>
+
+                        <h4>2. Start the Web Application</h4>
+                        <pre class="code-block">cd web-app
+npm install
+npm start</pre>
+
+                        <h4>3. Open Browser</h4>
+                        <p>Navigate to <a href="http://localhost:3001" target="_blank">http://localhost:3001</a></p>
+                    </div>
+
+                    <h3>macOS / Linux Setup</h3>
+                    <div class="setup-steps">
+                        <h4>1. Install Apache Fuseki</h4>
+                        <pre class="code-block"># Download from https://jena.apache.org/download/
+# Or use Homebrew on macOS:
+brew install apache-jena-fuseki
+
+# Or download and extract manually:
+curl -O https://dlcdn.apache.org/jena/binaries/apache-jena-fuseki-5.0.0.tar.gz
+tar xzf apache-jena-fuseki-5.0.0.tar.gz
+cd apache-jena-fuseki-5.0.0</pre>
+
+                        <h4>2. Start Apache Fuseki</h4>
+                        <pre class="code-block"># If installed via Homebrew:
+fuseki-server --mem /lindas
+
+# If using downloaded version:
+./fuseki-server --mem /lindas
+
+# Or with persistent storage:
+./fuseki-server --tdb2 --loc=./data /lindas</pre>
+
+                        <h4>3. Start the Web Application</h4>
+                        <pre class="code-block">cd web-app
+npm install
+npm start</pre>
+
+                        <h4>4. Open Browser</h4>
+                        <p>Navigate to <a href="http://localhost:3001" target="_blank">http://localhost:3001</a></p>
+                    </div>
+
+                    <h3>Verifying Setup</h3>
+                    <ol class="doc-list numbered">
+                        <li>Fuseki UI should be accessible at <a href="http://localhost:3030" target="_blank">http://localhost:3030</a></li>
+                        <li>Web app should show "Fuseki: Connected" in the top-right corner</li>
+                        <li>Create the <code>lindas</code> dataset in Setup tab if it doesn't exist</li>
+                    </ol>
                 </div>
             </div>
         </section>
