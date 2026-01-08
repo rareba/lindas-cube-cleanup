@@ -49,11 +49,23 @@ npm install
 
 ### Tab 2: Import Data
 
-1. **Set LINDAS Graph URI**: Default is `https://lindas.admin.ch/sfoe/cube`
-2. **List Available Cubes**: Query LINDAS to see available cube versions
-3. **Select Cubes**: Check the cubes you want to import
-4. **Import**: Download and import selected cubes to local Fuseki
-5. **Quick Option**: Use "Import Sample" to import the co2wirkung cube (7 versions) for testing
+**Graph Selection:**
+1. **Load Graphs**: Click "Load Graphs" to populate the dropdown with all available graphs from LINDAS
+2. **Select from Dropdown**: Choose a graph from the dropdown menu, or enter a URI manually
+3. **Default Graph**: The default is `https://lindas.admin.ch/sfoe/cube`
+
+**Cube Selection:**
+1. **Load Cubes**: After selecting a graph, click "Load Cubes" to populate the cube dropdown
+2. **Quick Select**: Choose a specific cube from the dropdown (cubes with multiple versions are grouped)
+3. **List All Cubes**: Alternatively, click "List Available Cubes" to see all cubes in a scrollable list
+4. **Select Cubes**: Check the cubes you want to import
+5. **Import**: Download and import selected cubes to local Fuseki
+6. **Quick Option**: Use "Import Sample" to import the co2wirkung cube (7 versions) for testing
+
+The dropdown menus are organized:
+- Graphs are shown with their triple count
+- Cubes with multiple versions are grouped by base cube name
+- Hover over options to see full URIs
 
 ### Tab 3: Explore Cubes
 
@@ -84,7 +96,9 @@ npm install
 | `/api/fuseki/create-dataset` | POST | Create new dataset |
 | `/api/fuseki/graphs` | POST | List graphs in dataset |
 | `/api/fuseki/import` | POST | Import N-Triples data |
-| `/api/lindas/graphs` | POST | Search graphs in LINDAS |
+| `/api/lindas/graphs` | POST | Search graphs in LINDAS (with filter) |
+| `/api/lindas/all-graphs` | POST | List all graphs from LINDAS |
+| `/api/lindas/cubes` | POST | List all cubes in a LINDAS graph |
 | `/api/lindas/download-cube` | POST | Download cube from LINDAS |
 | `/api/cubes/list-versions` | POST | List all cube versions |
 | `/api/cubes/count-versions` | POST | Count versions per cube |

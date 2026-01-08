@@ -10,11 +10,13 @@
     --warning-color: #d97706;
     --background: #f8fafc;
     --card-bg: #ffffff;
+    --bg-secondary: #f8fafc;
     --text-primary: #1e293b;
     --text-secondary: #64748b;
     --border-color: #e2e8f0;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --radius: 0.375rem;
 }
 
 * {
@@ -256,6 +258,11 @@ main {
 .info-box.warning {
     background: #fef3c7;
     color: #92400e;
+}
+
+.info-box.info {
+    background: #e0f2fe;
+    color: #0369a1;
 }
 
 /* Workflow steps */
@@ -881,6 +888,39 @@ footer .small {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
+}
+
+.input-with-dropdown {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.input-with-dropdown input {
+    flex: 1;
+}
+
+.btn-small {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.dropdown-select {
+    width: 100%;
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: white;
+    font-size: 0.9rem;
+}
+
+.dropdown-select.hidden {
+    display: none;
+}
+
+.dropdown-select option {
+    padding: 0.25rem;
 }
 
 .query-textarea {

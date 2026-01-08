@@ -82,6 +82,12 @@ function initEventListeners() {
     document.getElementById('btn-import-selected').addEventListener('click', importSelectedCubes);
     document.getElementById('btn-import-sample').addEventListener('click', importSampleData);
 
+    // Import tab - LINDAS dropdowns
+    document.getElementById('btn-load-lindas-graphs').addEventListener('click', loadLindasGraphs);
+    document.getElementById('btn-load-lindas-cubes').addEventListener('click', loadLindasCubes);
+    document.getElementById('lindas-graph-select').addEventListener('change', onLindasGraphSelected);
+    document.getElementById('lindas-cube-select').addEventListener('change', onLindasCubeSelected);
+
     // Explore tab
     document.getElementById('btn-load-local-cubes').addEventListener('click', loadLocalCubes);
     document.getElementById('btn-count-triples').addEventListener('click', countTriples);
@@ -102,6 +108,10 @@ function initEventListeners() {
     document.getElementById('btn-execute-query').addEventListener('click', executeQuery);
     document.getElementById('btn-clear-query').addEventListener('click', clearQuery);
     document.getElementById('query-template').addEventListener('change', onTemplateChange);
+    document.getElementById('btn-load-graphs').addEventListener('click', loadAvailableGraphs);
+    document.getElementById('btn-load-cubes').addEventListener('click', loadAvailableCubes);
+    document.getElementById('query-graph-select').addEventListener('change', onGraphSelected);
+    document.getElementById('query-cube-select').addEventListener('change', onCubeSelected);
 
     // Sync inputs
     elements.lindasGraph.addEventListener('change', syncGraphInputs);
@@ -222,6 +232,198 @@ async function searchGraphs() {
 function selectGraph(graphUri) {
     elements.lindasGraph.value = graphUri;
     syncGraphInputs();
+    // Also update the dropdown if it exists
+    const graphSelect = document.getElementById('lindas-graph-select');
+    if (graphSelect) {
+        graphSelect.value = graphUri;
+    }
+}
+
+// ========== LINDAS DROPDOWN FUNCTIONS ==========
+
+// Load all graphs from LINDAS into dropdown
+async function loadLindasGraphs() {
+    const graphSelect = document.getElementById('lindas-graph-select');
+    const loadBtn = document.getElementById('btn-load-lindas-graphs');
+    const statusEl = document.getElementById('lindas-graphs-status');
+
+    try {
+        loadBtn.disabled = true;
+        loadBtn.textContent = 'Loading...';
+        statusEl.classList.remove('hidden', 'error', 'success');
+        statusEl.classList.add('info');
+        statusEl.textContent = 'Loading graphs from LINDAS...';
+
+        const result = await api('/lindas/all-graphs', {});
+
+        // Clear and populate the select
+        graphSelect.innerHTML = '<option value="">-- Select a graph --</option>';
+
+        if (result.results && result.results.bindings) {
+            result.results.bindings.forEach(binding => {
+                const graphUri = binding.graph.value;
+                const tripleCount = binding.tripleCount ? parseInt(binding.tripleCount.value).toLocaleString() : '?';
+                const option = document.createElement('option');
+                option.value = graphUri;
+                // Shorten display for readability
+                const shortUri = graphUri.replace('https://lindas.admin.ch/', '');
+                option.textContent = `${shortUri} (${tripleCount} triples)`;
+                option.title = graphUri; // Full URI on hover
+                graphSelect.appendChild(option);
+            });
+        }
+
+        statusEl.classList.remove('info');
+        statusEl.classList.add('success');
+        statusEl.textContent = `Loaded ${result.results?.bindings?.length || 0} graphs from LINDAS`;
+
+        // Pre-select current graph if it exists in the list
+        if (elements.lindasGraph.value) {
+            graphSelect.value = elements.lindasGraph.value;
+        }
+
+    } catch (error) {
+        statusEl.classList.remove('info', 'success');
+        statusEl.classList.add('error');
+        statusEl.textContent = `Error loading graphs: ${error.message}`;
+    } finally {
+        loadBtn.disabled = false;
+        loadBtn.textContent = 'Load Graphs';
+    }
+}
+
+// Handle graph selection from LINDAS dropdown
+function onLindasGraphSelected() {
+    const graphSelect = document.getElementById('lindas-graph-select');
+    const cubeSelect = document.getElementById('lindas-cube-select');
+
+    if (graphSelect.value) {
+        elements.lindasGraph.value = graphSelect.value;
+        syncGraphInputs();
+
+        // Clear cube dropdown when graph changes
+        cubeSelect.innerHTML = '<option value="">-- Click "Load Cubes" to see cubes --</option>';
+        document.getElementById('lindas-cubes-status').classList.add('hidden');
+    }
+}
+
+// Load all cubes from selected LINDAS graph into dropdown
+async function loadLindasCubes() {
+    const graphUri = elements.lindasGraph.value;
+    const cubeSelect = document.getElementById('lindas-cube-select');
+    const loadBtn = document.getElementById('btn-load-lindas-cubes');
+    const statusEl = document.getElementById('lindas-cubes-status');
+
+    if (!graphUri) {
+        statusEl.classList.remove('hidden', 'success', 'info');
+        statusEl.classList.add('error');
+        statusEl.textContent = 'Please select or enter a graph URI first';
+        return;
+    }
+
+    try {
+        loadBtn.disabled = true;
+        loadBtn.textContent = 'Loading...';
+        statusEl.classList.remove('hidden', 'error', 'success');
+        statusEl.classList.add('info');
+        statusEl.textContent = 'Loading cubes from LINDAS...';
+
+        const result = await api('/lindas/cubes', { graphUri });
+
+        // Clear and populate the select
+        cubeSelect.innerHTML = '<option value="">-- Select a cube --</option>';
+
+        // Group by base cube for better organization
+        const cubesByBase = {};
+        if (result.results && result.results.bindings) {
+            result.results.bindings.forEach(binding => {
+                const cubeUri = binding.cube.value;
+                const title = binding.title?.value || '';
+                const version = binding.version?.value || '';
+                const baseCube = binding.baseCube?.value || cubeUri;
+
+                if (!cubesByBase[baseCube]) {
+                    cubesByBase[baseCube] = [];
+                }
+                cubesByBase[baseCube].push({ cubeUri, title, version });
+            });
+        }
+
+        // Add options grouped by base cube
+        let totalCubes = 0;
+        Object.keys(cubesByBase).sort().forEach(baseCube => {
+            const versions = cubesByBase[baseCube];
+            const baseName = baseCube.split('/').pop();
+
+            // If multiple versions, create optgroup
+            if (versions.length > 1) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = baseName;
+
+                versions.forEach(v => {
+                    const option = document.createElement('option');
+                    option.value = v.cubeUri;
+                    option.textContent = `v${v.version}${v.title ? ': ' + v.title.substring(0, 40) : ''}`;
+                    option.title = v.cubeUri;
+                    optgroup.appendChild(option);
+                    totalCubes++;
+                });
+
+                cubeSelect.appendChild(optgroup);
+            } else {
+                // Single version, add directly
+                const v = versions[0];
+                const option = document.createElement('option');
+                option.value = v.cubeUri;
+                option.textContent = `${baseName}${v.version ? ' v' + v.version : ''}${v.title ? ' - ' + v.title.substring(0, 30) : ''}`;
+                option.title = v.cubeUri;
+                cubeSelect.appendChild(option);
+                totalCubes++;
+            }
+        });
+
+        statusEl.classList.remove('info');
+        statusEl.classList.add('success');
+        statusEl.textContent = `Loaded ${totalCubes} cubes from ${Object.keys(cubesByBase).length} base cubes`;
+
+    } catch (error) {
+        statusEl.classList.remove('info', 'success');
+        statusEl.classList.add('error');
+        statusEl.textContent = `Error loading cubes: ${error.message}`;
+    } finally {
+        loadBtn.disabled = false;
+        loadBtn.textContent = 'Load Cubes';
+    }
+}
+
+// Handle cube selection from LINDAS dropdown
+function onLindasCubeSelected() {
+    const cubeSelect = document.getElementById('lindas-cube-select');
+    const selectedCube = cubeSelect.value;
+
+    if (selectedCube) {
+        // Add to selection set and update UI
+        state.selectedCubes.add(selectedCube);
+
+        // Find cube data if already loaded
+        const existingCube = state.availableCubes.find(c => c.cube?.value === selectedCube);
+
+        if (existingCube) {
+            // Cube already in list, just update checkbox
+            renderCubeList();
+        } else {
+            // Add cube to available list with minimal info
+            state.availableCubes.push({
+                cube: { value: selectedCube },
+                version: { value: selectedCube.match(/\/(\d+)\/?$/)?.[1] || '?' },
+                title: { value: '' },
+                baseCube: { value: selectedCube.replace(/\/\d+\/?$/, '') }
+            });
+            renderCubeList();
+        }
+
+        updateImportButton();
+    }
 }
 
 // List available cubes in LINDAS
@@ -1287,6 +1489,148 @@ WHERE {
 }`
     }
 };
+
+// Load available graphs from Fuseki
+async function loadAvailableGraphs() {
+    const graphSelect = document.getElementById('query-graph-select');
+    const loadBtn = document.getElementById('btn-load-graphs');
+
+    try {
+        loadBtn.disabled = true;
+        loadBtn.textContent = 'Loading...';
+
+        const response = await fetch('/api/query/graphs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                endpoint: state.fusekiEndpoint,
+                dataset: state.fusekiDataset
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error);
+        }
+
+        // Clear and populate the select
+        graphSelect.innerHTML = '<option value="">-- Select a graph --</option>';
+
+        if (data.results && data.results.bindings) {
+            data.results.bindings.forEach(binding => {
+                const graphUri = binding.graph.value;
+                const tripleCount = binding.tripleCount ? binding.tripleCount.value : '?';
+                const option = document.createElement('option');
+                option.value = graphUri;
+                option.textContent = `${graphUri} (${tripleCount} triples)`;
+                graphSelect.appendChild(option);
+            });
+        }
+
+        // Show the select
+        graphSelect.classList.remove('hidden');
+        showQueryStatus(`Found ${data.results?.bindings?.length || 0} graphs`, 'info');
+
+    } catch (error) {
+        showQueryStatus(`Error loading graphs: ${error.message}`, 'error');
+    } finally {
+        loadBtn.disabled = false;
+        loadBtn.textContent = 'Browse';
+    }
+}
+
+// Handle graph selection from dropdown
+function onGraphSelected() {
+    const graphSelect = document.getElementById('query-graph-select');
+    const graphInput = document.getElementById('query-graph');
+
+    if (graphSelect.value) {
+        graphInput.value = graphSelect.value;
+        // Clear cube selection when graph changes
+        const cubeSelect = document.getElementById('query-cube-select');
+        cubeSelect.innerHTML = '<option value="">-- Select a cube --</option>';
+        cubeSelect.classList.add('hidden');
+    }
+}
+
+// Load available cubes from selected graph
+async function loadAvailableCubes() {
+    const graphInput = document.getElementById('query-graph');
+    const cubeSelect = document.getElementById('query-cube-select');
+    const loadBtn = document.getElementById('btn-load-cubes');
+
+    const graphUri = graphInput.value.trim();
+    if (!graphUri) {
+        showQueryStatus('Please enter or select a graph URI first', 'warning');
+        return;
+    }
+
+    try {
+        loadBtn.disabled = true;
+        loadBtn.textContent = 'Loading...';
+
+        const response = await fetch('/api/query/cubes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                endpoint: state.fusekiEndpoint,
+                dataset: state.fusekiDataset,
+                graphUri: graphUri
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error);
+        }
+
+        // Clear and populate the select
+        cubeSelect.innerHTML = '<option value="">-- Select a cube --</option>';
+
+        if (data.results && data.results.bindings) {
+            data.results.bindings.forEach(binding => {
+                const cubeUri = binding.cube.value;
+                const title = binding.title ? binding.title.value : '';
+                const version = binding.version ? binding.version.value : '';
+                const option = document.createElement('option');
+                option.value = cubeUri;
+
+                // Create a readable label
+                let label = cubeUri.split('/').slice(-2).join('/');
+                if (title) {
+                    label = `${title.substring(0, 40)}${title.length > 40 ? '...' : ''} (v${version || '?'})`;
+                } else if (version) {
+                    label = `${label} (v${version})`;
+                }
+                option.textContent = label;
+                option.title = cubeUri; // Full URI on hover
+                cubeSelect.appendChild(option);
+            });
+        }
+
+        // Show the select
+        cubeSelect.classList.remove('hidden');
+        showQueryStatus(`Found ${data.results?.bindings?.length || 0} cubes in graph`, 'info');
+
+    } catch (error) {
+        showQueryStatus(`Error loading cubes: ${error.message}`, 'error');
+    } finally {
+        loadBtn.disabled = false;
+        loadBtn.textContent = 'Browse';
+    }
+}
+
+// Handle cube selection from dropdown
+function onCubeSelected() {
+    const cubeSelect = document.getElementById('query-cube-select');
+    const cubeInput = document.getElementById('query-cube-uri');
+
+    if (cubeSelect.value) {
+        cubeInput.value = cubeSelect.value;
+    }
+}
 
 // Load selected template into editor
 function loadQueryTemplate() {

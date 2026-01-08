@@ -94,12 +94,20 @@
         <section id="import" class="tab-content">
             <div class="card">
                 <h2>Import Data from LINDAS</h2>
-                <p class="description">Download cube data from LINDAS and import it into your local Fuseki instance.</p>
+                <p class="description">Select a graph and cubes from LINDAS to import into your local Fuseki instance.</p>
 
                 <div class="form-group">
-                    <label for="lindas-graph">LINDAS Graph URI:</label>
-                    <input type="text" id="lindas-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                    <label for="lindas-graph">LINDAS Graph:</label>
+                    <div class="input-with-dropdown">
+                        <select id="lindas-graph-select" class="dropdown-select">
+                            <option value="">-- Click "Load Graphs" to populate --</option>
+                        </select>
+                        <button type="button" id="btn-load-lindas-graphs" class="btn btn-small btn-secondary" title="Load all available graphs from LINDAS">Load Graphs</button>
+                    </div>
+                    <input type="text" id="lindas-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="Or enter graph URI manually">
                 </div>
+
+                <div id="lindas-graphs-status" class="info-box hidden"></div>
 
                 <div class="button-group">
                     <button id="btn-search-graphs" class="btn btn-secondary">Search Graphs</button>
@@ -107,17 +115,29 @@
                 </div>
 
                 <div id="graph-search-results" class="hidden">
-                    <h3>Available Graphs</h3>
+                    <h3>Available Graphs (Search Results)</h3>
                     <div id="graph-list" class="scrollable-list"></div>
                 </div>
             </div>
 
             <div class="card" id="cube-import-section">
                 <h2>Select Cubes to Import</h2>
-                <p class="description">Select specific cubes to import for testing, or import a sample.</p>
+                <p class="description">Select cubes from the dropdown or list all cubes from the selected graph.</p>
+
+                <div class="form-group">
+                    <label for="lindas-cube-select">Quick Select Cube:</label>
+                    <div class="input-with-dropdown">
+                        <select id="lindas-cube-select" class="dropdown-select">
+                            <option value="">-- Select a graph first, then load cubes --</option>
+                        </select>
+                        <button type="button" id="btn-load-lindas-cubes" class="btn btn-small btn-secondary" title="Load all cubes from selected graph">Load Cubes</button>
+                    </div>
+                </div>
+
+                <div id="lindas-cubes-status" class="info-box hidden"></div>
 
                 <div id="cube-list-container" class="scrollable-list">
-                    <p class="placeholder-text">Click "List Available Cubes" to see cubes from LINDAS</p>
+                    <p class="placeholder-text">Click "List Available Cubes" or use the dropdown above to select cubes</p>
                 </div>
 
                 <div class="button-group">
@@ -272,11 +292,23 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label for="query-graph">Graph URI:</label>
-                            <input type="text" id="query-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                            <div class="input-with-dropdown">
+                                <input type="text" id="query-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                                <button type="button" id="btn-load-graphs" class="btn btn-small btn-secondary" title="Load available graphs from Fuseki">Browse</button>
+                            </div>
+                            <select id="query-graph-select" class="dropdown-select hidden">
+                                <option value="">-- Select a graph --</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label for="query-cube-uri">Cube URI (for templates):</label>
-                            <input type="text" id="query-cube-uri" placeholder="https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/1">
+                            <div class="input-with-dropdown">
+                                <input type="text" id="query-cube-uri" placeholder="https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/1">
+                                <button type="button" id="btn-load-cubes" class="btn btn-small btn-secondary" title="Load available cubes from selected graph">Browse</button>
+                            </div>
+                            <select id="query-cube-select" class="dropdown-select hidden">
+                                <option value="">-- Select a cube --</option>
+                            </select>
                         </div>
                     </div>
 

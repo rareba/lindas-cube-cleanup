@@ -175,6 +175,65 @@ app.post('/api/lindas/graphs', async (req, res) => {
     }
 });
 
+// List all graphs from LINDAS (no search filter)
+app.post('/api/lindas/all-graphs', async (req, res) => {
+    try {
+        const query = `
+            SELECT DISTINCT ?graph (COUNT(*) as ?tripleCount)
+            WHERE {
+                GRAPH ?graph { ?s ?p ?o }
+            }
+            GROUP BY ?graph
+            ORDER BY ?graph
+            LIMIT 500
+        `;
+
+        const result = await executeSparqlSelect(LINDAS_ENDPOINT, query);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// List all cubes from a LINDAS graph
+app.post('/api/lindas/cubes', async (req, res) => {
+    try {
+        const { graphUri } = req.body;
+
+        if (!graphUri) {
+            return res.status(400).json({ error: 'graphUri is required' });
+        }
+
+        const query = `
+            PREFIX cube: <https://cube.link/>
+            PREFIX schema: <http://schema.org/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+            SELECT DISTINCT ?cube ?title ?version ?baseCube ?dateCreated
+            WHERE {
+                GRAPH <${graphUri}> {
+                    ?cube a cube:Cube .
+                    OPTIONAL { ?cube schema:name ?title . FILTER(lang(?title) = "en" || lang(?title) = "de" || lang(?title) = "") }
+                    OPTIONAL { ?cube schema:dateCreated ?dateCreated }
+
+                    # Extract version number and base cube from URI
+                    BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?versionStr)
+                    BIND(IF(REGEX(STR(?cube), "^.*/[0-9]+/?$"), xsd:integer(?versionStr), 0) AS ?version)
+                    BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCubeStr)
+                    BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+/?$"), IRI(?baseCubeStr), ?cube) AS ?baseCube)
+                }
+            }
+            ORDER BY ?baseCube DESC(?version)
+            LIMIT 500
+        `;
+
+        const result = await executeSparqlSelect(LINDAS_ENDPOINT, query);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Download cube data from LINDAS
 app.post('/api/lindas/download-cube', async (req, res) => {
     try {
@@ -725,6 +784,63 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
 });
 
 // ========== QUERY EDITOR API ==========
+
+// List all graphs in Fuseki dataset (for Query Editor dropdown)
+app.post('/api/query/graphs', async (req, res) => {
+    try {
+        const { endpoint, dataset } = req.body;
+        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
+
+        const query = `
+            SELECT DISTINCT ?graph (COUNT(*) as ?tripleCount)
+            WHERE {
+                GRAPH ?graph { ?s ?p ?o }
+            }
+            GROUP BY ?graph
+            ORDER BY DESC(?tripleCount)
+            LIMIT 100
+        `;
+
+        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// List all cubes in a graph (for Query Editor dropdown)
+app.post('/api/query/cubes', async (req, res) => {
+    try {
+        const { endpoint, dataset, graphUri } = req.body;
+        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
+
+        const query = `
+            PREFIX cube: <https://cube.link/>
+            PREFIX schema: <http://schema.org/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+            SELECT DISTINCT ?cube ?title ?version ?dateCreated
+            WHERE {
+                GRAPH <${graphUri}> {
+                    ?cube a cube:Cube .
+                    OPTIONAL { ?cube schema:name ?title . FILTER(lang(?title) = "en" || lang(?title) = "de" || lang(?title) = "") }
+                    OPTIONAL { ?cube schema:dateCreated ?dateCreated }
+
+                    # Extract version number from URI
+                    BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?versionStr)
+                    BIND(IF(REGEX(STR(?cube), "^.*/[0-9]+/?$"), xsd:integer(?versionStr), 0) AS ?version)
+                }
+            }
+            ORDER BY ?cube DESC(?version)
+            LIMIT 200
+        `;
+
+        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Execute raw SPARQL query (SELECT or UPDATE)
 app.post('/api/query/execute', async (req, res) => {
