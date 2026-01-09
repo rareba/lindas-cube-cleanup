@@ -868,7 +868,7 @@ app.post('/api/query/execute', async (req, res) => {
             });
         } else {
             // Execute SELECT query
-            const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/sparql` : `${endpoint}/sparql`;
+            const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
             const result = await executeSparqlSelect(sparqlEndpoint, query);
             const duration = Date.now() - startTime;
 

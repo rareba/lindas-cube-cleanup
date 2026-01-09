@@ -145,9 +145,18 @@ query = query.replace(/GRAPH_URI/g, graphUri);
 ### Tab 5: Query Editor
 - Template dropdown works (6 templates available)
 - Graph URI and Cube URI inputs functional
-- "Run Query" executes SELECT queries successfully
-- Query returned 7 rows in 31ms after endpoint fix
-- Results table displays properly
+- All 6 query templates tested and working:
+
+| Template | Type | Status | Result |
+|----------|------|--------|--------|
+| List All Cubes | SELECT | PASS | 6 rows, 24ms |
+| Count Total Triples in Graph | SELECT | PASS | 4186 triples, 22ms |
+| Preview Single Cube | SELECT | PASS | 1 row, 39ms |
+| Preview Versions to Delete | SELECT | PASS | 6 rows, 31ms |
+| Delete Single Cube Version | UPDATE | PASS | 163ms |
+| Delete Old Versions (Keep Newest 2) | UPDATE | PASS | 41ms |
+
+- Results table displays properly with sorting and pagination
 
 ### Tab 6: Backups
 - "Refresh Backup List" shows existing backups
