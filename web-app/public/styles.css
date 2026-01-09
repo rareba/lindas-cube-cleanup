@@ -34,13 +34,72 @@ body {
 
 /* Header */
 header {
-    background: linear-gradient(135deg, var(--primary-color) 0%, #1e40af 100%);
     color: white;
     padding: 1.5rem 2rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
     box-shadow: var(--shadow-lg);
+    transition: background 0.3s ease;
+}
+
+/* Local mode - blue header */
+header.local-mode {
+    background: linear-gradient(135deg, var(--primary-color) 0%, #1e40af 100%);
+}
+
+/* Cloud mode - red/danger header */
+header.cloud-mode {
+    background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+    animation: pulse-header 2s infinite;
+}
+
+@keyframes pulse-header {
+    0%, 100% { box-shadow: 0 4px 6px rgba(220, 38, 38, 0.3); }
+    50% { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.6); }
+}
+
+/* Cloud warning in title bar */
+.cloud-title-warning {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    animation: blink-warning-text 1s infinite;
+}
+
+@keyframes blink-warning-text {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+.cloud-title-warning .warning-icon {
+    font-size: 1.2rem;
+}
+
+.cloud-title-warning .warning-text {
+    font-weight: 600;
+}
+
+.cloud-title-warning .btn-switch-local {
+    background: white;
+    color: #dc2626;
+    border: none;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.cloud-title-warning .btn-switch-local:hover {
+    background: #fef2f2;
+    transform: scale(1.05);
 }
 
 .header-content h1 {

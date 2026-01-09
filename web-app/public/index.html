@@ -7,10 +7,16 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <header>
+    <header id="app-header" class="local-mode">
         <div class="header-content">
             <h1>LINDAS Cube Version Cleanup</h1>
             <p class="subtitle">Demo Tool - Delete old cube versions while preserving the newest 2</p>
+            <!-- Cloud Warning in Title Bar -->
+            <div id="cloud-title-warning" class="cloud-title-warning hidden">
+                <span class="warning-icon">&#9888;</span>
+                <span class="warning-text">CLOUD MODE - Changes affect LIVE DATA!</span>
+                <button id="btn-switch-to-local-header" class="btn-switch-local">Switch to Local</button>
+            </div>
         </div>
         <div class="connection-status">
             <div id="mode-indicator" class="mode-indicator local">
@@ -36,26 +42,7 @@
     <main>
         <!-- Setup Tab -->
         <section id="setup" class="tab-content active">
-            <!-- Cloud Mode Warning Banner - More Prominent -->
-            <div id="cloud-warning-banner" class="warning-banner cloud-danger hidden">
-                <div class="warning-icon-large">&#9888;</div>
-                <div class="warning-content">
-                    <strong class="warning-title">PRODUCTION MODE - CAUTION!</strong>
-                    <p class="warning-message">You are connected to a <span class="highlight-danger">cloud/production</span> triplestore.</p>
-                    <p class="warning-detail">All changes, deletions, and imports will affect <strong>LIVE DATA</strong>.</p>
-                    <ul class="warning-list">
-                        <li>Deleted data may be <strong>unrecoverable</strong> without backups</li>
-                        <li>Changes are <strong>immediate</strong> and affect all users</li>
-                        <li>Always create backups before deleting data</li>
-                    </ul>
-                </div>
-                <div class="warning-actions">
-                    <button id="btn-switch-to-local" class="btn btn-primary">Switch to Local Mode</button>
-                    <button id="btn-acknowledge-cloud" class="btn btn-danger-outline">I Understand the Risks</button>
-                </div>
-            </div>
-
-            <!-- Local Mode Info Banner -->
+            <!-- Local Mode Info Banner (simplified) -->
             <div id="local-mode-banner" class="info-banner local-safe">
                 <div class="info-icon">&#10003;</div>
                 <div class="info-content">

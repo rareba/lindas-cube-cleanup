@@ -55,12 +55,12 @@ let cloudModeAcknowledged = false;
 
 // State management
 const state = {
-    // Triplestore configuration
+    // Triplestore configuration - Fuseki is default (no license required)
     triplestoreType: 'fuseki',
     triplestoreMode: 'local',
     fusekiEndpoint: 'http://localhost:3030',
     fusekiDataset: 'lindas',
-    stardogDatabase: 'mydb',
+    stardogDatabase: 'lindas',
     graphdbRepository: 'test',
     authUsername: '',
     authPassword: '',
@@ -179,10 +179,17 @@ function updateTriplestoreUI() {
         }
     }
 
-    // Show/hide cloud warning banner (only show if not acknowledged)
-    if (elements.cloudWarningBanner) {
-        const showCloudWarning = mode === 'cloud' && !cloudModeAcknowledged;
-        elements.cloudWarningBanner.classList.toggle('hidden', !showCloudWarning);
+    // Update header background color based on mode
+    const header = document.getElementById('app-header');
+    if (header) {
+        header.classList.toggle('local-mode', mode === 'local');
+        header.classList.toggle('cloud-mode', mode === 'cloud');
+    }
+
+    // Show/hide cloud warning in title bar
+    const cloudTitleWarning = document.getElementById('cloud-title-warning');
+    if (cloudTitleWarning) {
+        cloudTitleWarning.classList.toggle('hidden', mode !== 'cloud');
     }
 
     // Show/hide local mode banner
@@ -272,25 +279,13 @@ function initEventListeners() {
         });
     }
 
-    // Cloud warning banner - switch to local button
-    const switchToLocalBtn = document.getElementById('btn-switch-to-local');
-    if (switchToLocalBtn) {
-        switchToLocalBtn.addEventListener('click', () => {
+    // Header switch to local button (in title bar warning)
+    const switchToLocalHeaderBtn = document.getElementById('btn-switch-to-local-header');
+    if (switchToLocalHeaderBtn) {
+        switchToLocalHeaderBtn.addEventListener('click', () => {
             if (elements.triplestoreMode) {
                 elements.triplestoreMode.value = 'local';
-                cloudModeAcknowledged = false;
                 updateTriplestoreUI();
-            }
-        });
-    }
-
-    // Cloud warning banner - acknowledge button
-    const acknowledgeCloudBtn = document.getElementById('btn-acknowledge-cloud');
-    if (acknowledgeCloudBtn) {
-        acknowledgeCloudBtn.addEventListener('click', () => {
-            cloudModeAcknowledged = true;
-            if (elements.cloudWarningBanner) {
-                elements.cloudWarningBanner.classList.add('hidden');
             }
         });
     }
