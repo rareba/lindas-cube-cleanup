@@ -24,6 +24,10 @@ Each triplestore configuration includes:
 
 ### 2. Local-First Experience
 
+**Default Triplestore: Stardog Free**
+
+The application defaults to Stardog Free as the primary local triplestore. Stardog requires a free license file which can be obtained by registering at https://www.stardog.com/get-started/. Users can switch to Apache Fuseki in the UI if they prefer a license-free option.
+
 The application now defaults to local mode with:
 
 - **Local Mode Banner**: A green confirmation banner shows when in local mode, reassuring users that changes only affect local data
@@ -114,7 +118,7 @@ New endpoints added:
 
 ## Local Triplestore Quick Setup
 
-### Apache Fuseki (Recommended)
+### Apache Fuseki (No License Required)
 
 **Docker:**
 ```bash
@@ -128,7 +132,7 @@ docker run -d --name fuseki -p 3030:3030 \
 2. Extract and run: `fuseki-server --mem /lindas`
 3. Access at http://localhost:3030
 
-### Stardog Free
+### Stardog Free (Default)
 
 **Docker:**
 ```bash

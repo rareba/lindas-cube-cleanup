@@ -55,10 +55,10 @@ let cloudModeAcknowledged = false;
 
 // State management
 const state = {
-    // Triplestore configuration - Fuseki is default (no license required)
-    triplestoreType: 'fuseki',
+    // Triplestore configuration - Stardog is default (get free license at stardog.com)
+    triplestoreType: 'stardog',
     triplestoreMode: 'local',
-    fusekiEndpoint: 'http://localhost:3030',
+    fusekiEndpoint: 'http://localhost:5820',
     fusekiDataset: 'lindas',
     stardogDatabase: 'lindas',
     graphdbRepository: 'test',
