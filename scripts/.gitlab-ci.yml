@@ -1,0 +1,104 @@
+# =============================================================================
+# LINDAS Cube Cleanup - GitLab CI/CD Pipeline
+#
+# This pipeline provides scheduled and manual cleanup of old cube versions.
+#
+# Required CI/CD Variables (set in GitLab > Settings > CI/CD > Variables):
+#   SPARQL_QUERY_ENDPOINT   - SPARQL query endpoint URL
+#   SPARQL_UPDATE_ENDPOINT  - SPARQL update endpoint URL
+#   GRAPH_URI               - Named graph URI to clean
+#   SPARQL_USERNAME         - (optional) Basic auth username
+#   SPARQL_PASSWORD         - (optional, masked) Basic auth password
+#
+# Schedule Setup:
+#   Go to CI/CD > Schedules and create:
+#   - Description: "Weekly Cube Cleanup"
+#   - Interval: 0 2 * * 0 (Sundays at 2 AM)
+#   - Target branch: main
+# =============================================================================
+
+stages:
+  - preview
+  - cleanup
+  - restore
+
+variables:
+  VERSIONS_TO_KEEP: "2"
+  BACKUP_DIR: "./backups"
+
+default:
+  image: curlimages/curl:latest
+  before_script:
+    - apk add --no-cache bash jq coreutils
+    - chmod +x scripts/lindas-cleanup.sh
+
+# -----------------------------------------------------------------------------
+# Preview what would be deleted (safe, read-only)
+# -----------------------------------------------------------------------------
+preview:
+  stage: preview
+  script:
+    - ./scripts/lindas-cleanup.sh preview
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# -----------------------------------------------------------------------------
+# Scheduled cleanup (runs weekly)
+# -----------------------------------------------------------------------------
+scheduled-cleanup:
+  stage: cleanup
+  script:
+    - echo "Starting scheduled cleanup..."
+    - ./scripts/lindas-cleanup.sh cleanup
+  artifacts:
+    paths:
+      - backups/
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# -----------------------------------------------------------------------------
+# Manual cleanup (trigger from GitLab UI)
+# -----------------------------------------------------------------------------
+manual-cleanup:
+  stage: cleanup
+  script:
+    - echo "Starting manual cleanup..."
+    - ./scripts/lindas-cleanup.sh cleanup
+  artifacts:
+    paths:
+      - backups/
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+
+# -----------------------------------------------------------------------------
+# List available backups
+# -----------------------------------------------------------------------------
+list-backups:
+  stage: preview
+  script:
+    - ./scripts/lindas-cleanup.sh list-backups
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+
+# -----------------------------------------------------------------------------
+# Restore from backup (requires BACKUP_FILE variable)
+# -----------------------------------------------------------------------------
+restore:
+  stage: restore
+  script:
+    - |
+      if [ -z "$BACKUP_FILE" ]; then
+        echo "ERROR: Set BACKUP_FILE variable to the backup filename"
+        echo "Example: backups/cube_name_v5_20240115_020000.nt"
+        exit 1
+      fi
+    - ./scripts/lindas-cleanup.sh restore "$BACKUP_FILE"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
