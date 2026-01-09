@@ -709,20 +709,30 @@ WHERE {
 }</pre>
 
                     <h3>6. Delete All Old Versions (Keep Newest 2)</h3>
-                    <p><strong>Purpose:</strong> Batch deletes all versions marked DELETE from the preview query.</p>
+                    <p><strong>Purpose:</strong> Automatically finds and deletes ALL cube versions older than the newest 2 per base cube.</p>
                     <p><strong>Query Logic:</strong></p>
                     <ul class="doc-list">
-                        <li>Combines ranking logic with deletion pattern</li>
-                        <li>Only targets cubes where rank > 2 (older than newest 2)</li>
-                        <li>Deletes all components for each matched cube</li>
+                        <li><strong>Auto-detection:</strong> No Cube URI required - automatically finds all cubes to delete</li>
+                        <li>Uses FILTER EXISTS to find cubes with at least 2 newer versions (rank > 2)</li>
+                        <li>Extracts version numbers from URI pattern <code>/baseCube/version</code></li>
+                        <li>Deletes all components (metadata, shapes, properties, observations) for matched cubes</li>
                         <li><strong>Warning:</strong> This is a powerful batch operation - always run the preview first!</li>
                     </ul>
-                    <pre class="code-block sparql"># Combined logic:
+                    <pre class="code-block sparql"># Auto-detect and delete logic:
 DELETE { ... cube components ... }
 WHERE {
-  # Subquery identifies cubes with rank > 2
-  { SELECT ?cube WHERE { ... ranking logic ... }
-    HAVING (COUNT(?newerCube) + 1 > 2) }
+  ?cube a cube:Cube .
+  # Extract version and base cube from URI
+  BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?v)
+  BIND(REPLACE(STR(?cube), "^(.*)/[0-9]+/?$", "$1") AS ?baseStr)
+
+  # Only delete if at least 2 newer versions exist (rank > 2)
+  FILTER EXISTS {
+    ?newer1 a cube:Cube . # First newer version
+    ?newer2 a cube:Cube . # Second newer version (different from first)
+    FILTER(?newer1 != ?newer2)
+    # Both from same base cube with higher version numbers
+  }
   # Then match all components of those cubes
   { ?cube ... component patterns ... }
 }</pre>

@@ -246,6 +246,90 @@ WHERE {
 }`;
 }
 
+/**
+ * Delete ALL old versions automatically (keep newest N per base cube)
+ * This query automatically finds and deletes all cube versions with rank > versionsToKeep
+ * No specific cube URI is required - it works on all cubes in the graph
+ */
+function deleteAllOldVersionsQuery(graphUri, versionsToKeep = 2) {
+    return `${PREFIXES}
+# WARNING: This query deletes ALL cube versions except the newest ${versionsToKeep} per base cube
+# Make sure to backup data before running!
+
+WITH <${graphUri}>
+DELETE {
+  ?cube ?p1 ?o1 .
+  ?shape ?shapeP ?shapeO .
+  ?prop ?propP ?propO .
+  ?set ?setP ?setO .
+  ?obs ?obsP ?obsO .
+}
+WHERE {
+  # Find cubes to delete: those with rank > ${versionsToKeep} (at least ${versionsToKeep} newer versions exist)
+  ?cube a cube:Cube .
+
+  # Only process cubes that follow the /baseCube/version URI pattern
+  FILTER(REGEX(STR(?cube), "^.*/[0-9]+/?$"))
+
+  # Extract version number and base cube from URI
+  BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?v)
+  BIND(REPLACE(STR(?cube), "^(.*)/[0-9]+/?$", "$1") AS ?baseStr)
+
+  # Filter: only delete cubes where at least ${versionsToKeep} newer versions exist (rank > ${versionsToKeep})
+  ${generateNewerVersionsFilter(versionsToKeep)}
+
+  # Delete all related triples for selected cubes
+  {
+    # Cube metadata
+    { ?cube ?p1 ?o1 }
+    UNION
+    # Shape constraints
+    { ?cube cube:observationConstraint ?shape .
+      ?shape ?shapeP ?shapeO }
+    UNION
+    # Shape properties (recursive)
+    { ?cube cube:observationConstraint/sh:property ?directProp .
+      ?directProp (<>|!<>)* ?prop .
+      ?prop ?propP ?propO }
+    UNION
+    # Observation sets
+    { ?cube cube:observationSet ?set .
+      ?set ?setP ?setO }
+    UNION
+    # Observations
+    { ?cube cube:observationSet/cube:observation ?obs .
+      ?obs ?obsP ?obsO }
+  }
+}`;
+}
+
+/**
+ * Generate FILTER EXISTS clause for N newer versions
+ * A cube has rank > N if there exist N different cubes from same base with higher version
+ */
+function generateNewerVersionsFilter(count) {
+    const filters = [];
+    for (let i = 1; i <= count; i++) {
+        filters.push(`    ?newer${i} a cube:Cube .
+    FILTER(REGEX(STR(?newer${i}), "^.*/[0-9]+/?$"))
+    FILTER(REPLACE(STR(?newer${i}), "^(.*)/[0-9]+/?$", "$1") = ?baseStr)
+    FILTER(xsd:integer(REPLACE(STR(?newer${i}), "^.*/([0-9]+)/?$", "$1")) > ?v)`);
+    }
+
+    // Add filters to ensure all newer versions are distinct
+    const distinctFilters = [];
+    for (let i = 2; i <= count; i++) {
+        for (let j = 1; j < i; j++) {
+            distinctFilters.push(`    FILTER(?newer${i} != ?newer${j})`);
+        }
+    }
+
+    return `FILTER EXISTS {
+${filters.join('\n\n')}
+${distinctFilters.length > 0 ? '\n' + distinctFilters.join('\n') : ''}
+  }`;
+}
+
 module.exports = {
     PREFIXES,
     listCubeVersionsQuery,
@@ -257,5 +341,7 @@ module.exports = {
     deleteCubeMetadataQuery,
     countObservationsQuery,
     cubeExistsQuery,
-    countTriplesQuery
+    countTriplesQuery,
+    deleteAllOldVersionsQuery,
+    generateNewerVersionsFilter
 };

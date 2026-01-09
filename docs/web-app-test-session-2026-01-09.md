@@ -113,6 +113,37 @@ query = query.replace(/GRAPH_URI/g, graphUri);
   ?prop ?propP ?propO }
 ```
 
+### Enhancement 7: Auto-Detect Delete Old Versions Query
+**User Request**: The delete old versions query should run by default for all cubes without requiring a specific Cube URI
+**Previous Behavior**: Required a `<CUBE_URI>` parameter to specify which cube's old versions to delete
+**New Behavior**: Automatically finds and deletes ALL cube versions with rank > 2 (older than newest 2)
+**Implementation**:
+- Uses `FILTER EXISTS` pattern to find cubes with at least 2 newer versions
+- Extracts version numbers from URI pattern `/baseCube/version` using REGEX
+- No longer requires Cube URI input - works automatically on all cubes in the graph
+**File**: `web-app/public/app.js` (delete-old-versions query template)
+
+```sparql
+# Key logic: Find cubes where at least 2 newer versions exist
+FILTER EXISTS {
+  ?newer1 a cube:Cube .
+  FILTER(REGEX(STR(?newer1), "^.*/[0-9]+/?$"))
+  FILTER(REPLACE(STR(?newer1), "^(.*)/[0-9]+/?$", "$1") = ?baseStr)
+  FILTER(xsd:integer(REPLACE(STR(?newer1), "^.*/([0-9]+)/?$", "$1")) > ?v)
+
+  ?newer2 a cube:Cube .
+  FILTER(?newer2 != ?newer1)
+  FILTER(REGEX(STR(?newer2), "^.*/[0-9]+/?$"))
+  FILTER(REPLACE(STR(?newer2), "^(.*)/[0-9]+/?$", "$1") = ?baseStr)
+  FILTER(xsd:integer(REPLACE(STR(?newer2), "^.*/([0-9]+)/?$", "$1")) > ?v)
+}
+```
+
+**Test Results**:
+- Imported 7 versions of co2wirkung cube (5,261 triples)
+- Ran Delete Old Versions query: executed successfully in 1648ms
+- Verified with Preview query: only 2 versions remain (versions 6 and 7, both marked KEEP)
+
 ## Detailed Tab Testing
 
 ### Tab 1: Setup
@@ -182,9 +213,13 @@ query = query.replace(/GRAPH_URI/g, graphUri);
    - Removed confirmation dialogs for delete operations
    - Added placeholder replacement at query execution time (Issue 5)
    - Fixed SPARQL variable scoping in delete-old-versions template (Issue 6)
+   - Redesigned delete-old-versions query with auto-detect functionality (Enhancement 7)
 
 2. **web-app/server.js**
    - Fixed SPARQL endpoint path (`/sparql` -> `/query`)
+
+3. **web-app/public/index.html**
+   - Updated Documentation tab with new auto-detect query explanation
 
 ## Recommendations for Demo
 

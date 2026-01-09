@@ -67,10 +67,18 @@ The cleanup process follows these steps:
    - Save as N-Triples to backup storage
    - Record metadata (cube URI, graph, timestamp, triple count)
 
-3. DELETE (per cube, chunked)
+3. DELETE (two modes available)
+
+   **Mode A: Per-Cube Deletion (chunked)**
    - Step 1: Delete observations (LIMIT 50000 per iteration)
    - Step 2: Delete observation set links
    - Step 3: Delete cube metadata and SHACL shapes
+
+   **Mode B: Bulk Delete All Old Versions (new)**
+   - Single SPARQL UPDATE query that automatically detects and deletes all versions
+   - Uses FILTER EXISTS to find cubes with rank > versionsToKeep
+   - No individual cube URI required - processes all cubes in one operation
+   - Deletes all components: metadata, shapes, properties, observations
 
 4. VERIFY
    - ASK query to confirm cube no longer exists
@@ -206,6 +214,35 @@ scheduled-cleanup:
     - if: $CI_PIPELINE_SOURCE == "schedule"
 ```
 
+### CLI Commands
+
+```bash
+# Standard cleanup (per-cube deletion with backups)
+node src/cli.js cleanup --graph https://lindas.admin.ch/sfoe/cube --keep 2
+
+# Bulk delete mode (faster, single query, no individual backups)
+node src/cli.js cleanup --graph https://lindas.admin.ch/sfoe/cube --keep 2 --bulk
+
+# Preview what would be deleted (dry-run)
+node src/cli.js cleanup --graph https://lindas.admin.ch/sfoe/cube --dry-run
+
+# List available backups
+node src/cli.js list-backups
+
+# Restore from backup
+node src/cli.js restore path/to/backup.nt --graph https://lindas.admin.ch/sfoe/cube
+
+# Test connection
+node src/cli.js test-connection
+```
+
+**Options:**
+- `-g, --graph <uri...>` - Named graph(s) to clean
+- `-k, --keep <n>` - Number of versions to keep (default: 2)
+- `-d, --dry-run` - Preview changes without deleting
+- `-b, --bulk` - Use bulk delete mode (faster, single query)
+- `--no-backup` - Skip backup creation
+
 ### 2. Docker Container
 
 ```bash
@@ -274,6 +311,45 @@ Configure notifications in config.json:
   }
 }
 ```
+
+## SPARQL Query Templates
+
+The cleanup service provides the following SPARQL query templates in `src/utils/sparql.js`:
+
+| Query Function | Purpose |
+|----------------|---------|
+| `listCubeVersionsQuery` | List all cube versions in a graph with version numbers |
+| `identifyDeletionsQuery` | Rank versions and identify which to delete |
+| `previewCubeQuery` | Count components (shapes, properties, observations) for a cube |
+| `exportCubeQuery` | CONSTRUCT query to export cube as N-Triples for backup |
+| `deleteObservationsQuery` | Delete observations (used in per-cube mode) |
+| `deleteObservationLinksQuery` | Delete observation set links |
+| `deleteCubeMetadataQuery` | Delete cube metadata and shapes |
+| `deleteAllOldVersionsQuery` | **NEW** - Bulk delete all old versions automatically |
+| `countObservationsQuery` | Count remaining observations for verification |
+| `cubeExistsQuery` | ASK query to check if cube exists |
+| `countTriplesQuery` | Count total triples in a graph |
+
+### Bulk Delete Query Logic
+
+The `deleteAllOldVersionsQuery` function generates a SPARQL UPDATE that:
+
+1. Finds all cubes matching `/baseCube/version` URI pattern
+2. Extracts version numbers using REGEX
+3. Uses FILTER EXISTS to find cubes with `versionsToKeep` or more newer versions
+4. Deletes all related triples in one operation
+
+```sparql
+# Example: Delete all versions except newest 2
+FILTER EXISTS {
+  ?newer1 a cube:Cube .  # First newer version
+  ?newer2 a cube:Cube .  # Second newer version
+  FILTER(?newer1 != ?newer2)
+  # Both from same base cube with higher version numbers
+}
+```
+
+The `versionsToKeep` parameter is configurable (default: 2).
 
 ## Security Considerations
 

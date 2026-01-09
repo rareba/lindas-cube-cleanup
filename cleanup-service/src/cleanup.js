@@ -297,6 +297,58 @@ class CleanupService {
     }
 
     /**
+     * Bulk delete all old versions in a single query (faster but no individual backups)
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<number>} - Number of cubes deleted
+     */
+    async bulkDeleteOldVersions(graphUri) {
+        this.logger.info('Running bulk delete for all old versions', {
+            graph: graphUri,
+            versionsToKeep: this.versionsToKeep
+        });
+
+        if (this.dryRun) {
+            // In dry-run mode, just identify what would be deleted
+            const cubesToDelete = await this.identifyDeletions(graphUri);
+            this.logger.info('[DRY RUN] Would bulk delete cubes', {
+                count: cubesToDelete.length,
+                cubes: cubesToDelete.map(c => c.uri)
+            });
+            return cubesToDelete.length;
+        }
+
+        // Count triples before
+        const countBefore = await this.countGraphTriples(graphUri);
+
+        // Execute bulk delete query
+        const query = sparql.deleteAllOldVersionsQuery(graphUri, this.versionsToKeep);
+        await this.triplestore.update(query);
+
+        // Count triples after
+        const countAfter = await this.countGraphTriples(graphUri);
+        const triplesDeleted = countBefore - countAfter;
+
+        this.stats.triplesDeleted += triplesDeleted;
+        this.logger.info('Bulk delete completed', {
+            graph: graphUri,
+            triplesDeleted
+        });
+
+        return triplesDeleted;
+    }
+
+    /**
+     * Count total triples in a graph
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<number>} - Triple count
+     */
+    async countGraphTriples(graphUri) {
+        const query = sparql.countTriplesQuery(graphUri);
+        const result = await this.triplestore.query(query);
+        return parseInt(result.results.bindings[0]?.count?.value || '0', 10);
+    }
+
+    /**
      * Log cleanup summary
      */
     logSummary() {

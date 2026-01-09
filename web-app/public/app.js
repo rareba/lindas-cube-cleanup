@@ -1734,14 +1734,14 @@ ORDER BY ?baseCube ?rank`
         type: 'update',
         query: `PREFIX cube: <https://cube.link/>
 PREFIX sh: <http://www.w3.org/ns/shacl#>
-PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
 # WARNING: This query deletes ALL cube versions except the newest 2 per base cube
 # Make sure to backup data before running!
-
-# This query must be run for EACH cube to delete (replace CUBE_URI)
 # Use "Preview Versions to Delete" first to see which cubes will be affected
+
+# This query automatically finds cubes with rank > 2 (at least 2 newer versions)
+# and deletes them along with all their related triples
 
 WITH <GRAPH_URI>
 DELETE {
@@ -1752,29 +1752,53 @@ DELETE {
   ?obs ?obsP ?obsO .
 }
 WHERE {
-  # Target cube to delete (versions with rank > 2)
-  BIND(<CUBE_URI> AS ?cube)
-  ?cube rdf:type cube:Cube .
+  # Find cubes to delete: those with rank > 2 (at least 2 newer versions exist)
+  ?cube a cube:Cube .
 
-  # Delete cube metadata
-  { ?cube ?p1 ?o1 }
-  UNION
-  # Delete shape constraints
-  { ?cube cube:observationConstraint ?shape .
-    ?shape ?shapeP ?shapeO }
-  UNION
-  # Delete shape properties (recursive)
-  { ?cube cube:observationConstraint/sh:property ?directProp .
-    ?directProp (<>|!<>)* ?prop .
-    ?prop ?propP ?propO }
-  UNION
-  # Delete observation sets
-  { ?cube cube:observationSet ?set .
-    ?set ?setP ?setO }
-  UNION
-  # Delete observations
-  { ?cube cube:observationSet/cube:observation ?obs .
-    ?obs ?obsP ?obsO }
+  # Only process cubes that follow the /baseCube/version URI pattern
+  FILTER(REGEX(STR(?cube), "^.*/[0-9]+/?$"))
+
+  # Extract version number and base cube from URI
+  BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?v)
+  BIND(REPLACE(STR(?cube), "^(.*)/[0-9]+/?$", "$1") AS ?baseStr)
+
+  # Filter: only delete cubes where at least 2 newer versions exist (rank > 2)
+  # A cube has rank > 2 if there exist two different cubes from same base with higher version
+  FILTER EXISTS {
+    ?newer1 a cube:Cube .
+    FILTER(REGEX(STR(?newer1), "^.*/[0-9]+/?$"))
+    FILTER(REPLACE(STR(?newer1), "^(.*)/[0-9]+/?$", "$1") = ?baseStr)
+    FILTER(xsd:integer(REPLACE(STR(?newer1), "^.*/([0-9]+)/?$", "$1")) > ?v)
+
+    ?newer2 a cube:Cube .
+    FILTER(?newer2 != ?newer1)
+    FILTER(REGEX(STR(?newer2), "^.*/[0-9]+/?$"))
+    FILTER(REPLACE(STR(?newer2), "^(.*)/[0-9]+/?$", "$1") = ?baseStr)
+    FILTER(xsd:integer(REPLACE(STR(?newer2), "^.*/([0-9]+)/?$", "$1")) > ?v)
+  }
+
+  # Delete all related triples for selected cubes
+  {
+    # Cube metadata
+    { ?cube ?p1 ?o1 }
+    UNION
+    # Shape constraints
+    { ?cube cube:observationConstraint ?shape .
+      ?shape ?shapeP ?shapeO }
+    UNION
+    # Shape properties (recursive)
+    { ?cube cube:observationConstraint/sh:property ?directProp .
+      ?directProp (<>|!<>)* ?prop .
+      ?prop ?propP ?propO }
+    UNION
+    # Observation sets
+    { ?cube cube:observationSet ?set .
+      ?set ?setP ?setO }
+    UNION
+    # Observations
+    { ?cube cube:observationSet/cube:observation ?obs .
+      ?obs ?obsP ?obsO }
+  }
 }`
     }
 };

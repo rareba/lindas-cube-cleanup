@@ -137,6 +137,7 @@ program
     .option('-k, --keep <n>', 'Number of versions to keep (default: 2)', parseInt)
     .option('-d, --dry-run', 'Preview changes without deleting')
     .option('--no-backup', 'Skip backup creation')
+    .option('-b, --bulk', 'Use bulk delete mode (faster, single query, no individual backups)')
     .action(async (options, cmd) => {
         try {
             const globalOpts = cmd.parent.opts();
@@ -185,12 +186,19 @@ program
                 dryRun
             });
 
-            // Run cleanup
-            const stats = await cleanup.run(graphs);
-
-            // Exit with error code if there were errors
-            if (stats.errors.length > 0) {
-                process.exit(1);
+            // Run cleanup (standard or bulk mode)
+            if (options.bulk) {
+                logger.info('Using bulk delete mode');
+                for (const graphUri of graphs) {
+                    await cleanup.bulkDeleteOldVersions(graphUri);
+                }
+                cleanup.logSummary();
+            } else {
+                const stats = await cleanup.run(graphs);
+                // Exit with error code if there were errors
+                if (stats.errors.length > 0) {
+                    process.exit(1);
+                }
             }
 
         } catch (error) {
