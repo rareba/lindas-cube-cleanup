@@ -330,6 +330,192 @@ ${distinctFilters.length > 0 ? '\n' + distinctFilters.join('\n') : ''}
   }`;
 }
 
+// =============================================================================
+// Orphan Detection and Cleanup Queries
+// =============================================================================
+
+/**
+ * Query to get a summary of all orphan objects by type
+ */
+function findOrphansSummaryQuery(graphUri) {
+    return `${PREFIXES}
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+SELECT ?orphanType (COUNT(DISTINCT ?orphan) AS ?count)
+WHERE {
+  GRAPH <${graphUri}> {
+    {
+      # Orphan Observation Sets
+      ?orphan cube:observation ?someObs .
+      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
+      BIND("ObservationSet" AS ?orphanType)
+    }
+    UNION
+    {
+      # Orphan NodeShapes
+      ?orphan a sh:NodeShape .
+      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
+      BIND("NodeShape" AS ?orphanType)
+    }
+    UNION
+    {
+      # Orphan PropertyShapes
+      ?orphan a sh:PropertyShape .
+      FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
+      BIND("PropertyShape" AS ?orphanType)
+    }
+  }
+}
+GROUP BY ?orphanType
+ORDER BY ?orphanType`;
+}
+
+/**
+ * Query to find orphan observation sets with details
+ */
+function findOrphanObservationSetsQuery(graphUri) {
+    return `${PREFIXES}
+
+SELECT ?orphanSet (COUNT(DISTINCT ?obs) AS ?observationCount) (COUNT(?p) AS ?totalTriples)
+WHERE {
+  GRAPH <${graphUri}> {
+    ?orphanSet cube:observation ?someObs .
+    FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+    ?orphanSet ?p ?o .
+    OPTIONAL { ?orphanSet cube:observation ?obs }
+  }
+}
+GROUP BY ?orphanSet
+ORDER BY DESC(?observationCount)
+LIMIT 100`;
+}
+
+/**
+ * Query to find orphan SHACL shapes
+ */
+function findOrphanShapesQuery(graphUri) {
+    return `${PREFIXES}
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+SELECT ?orphanShape ?shapeType (COUNT(?p) AS ?tripleCount)
+WHERE {
+  GRAPH <${graphUri}> {
+    {
+      ?orphanShape a sh:NodeShape .
+      BIND("NodeShape" AS ?shapeType)
+      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+    }
+    UNION
+    {
+      ?orphanShape a sh:PropertyShape .
+      BIND("PropertyShape" AS ?shapeType)
+      FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+    }
+    ?orphanShape ?p ?o .
+  }
+}
+GROUP BY ?orphanShape ?shapeType
+ORDER BY ?shapeType DESC(?tripleCount)
+LIMIT 100`;
+}
+
+/**
+ * Query to delete orphan observation sets and their observations
+ */
+function deleteOrphanObservationSetsQuery(graphUri) {
+    return `${PREFIXES}
+
+WITH <${graphUri}>
+DELETE {
+  ?orphanSet ?setP ?setO .
+  ?obs ?obsP ?obsO .
+}
+WHERE {
+  ?orphanSet cube:observation ?someObs .
+  FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+  ?orphanSet ?setP ?setO .
+  OPTIONAL {
+    ?orphanSet cube:observation ?obs .
+    ?obs ?obsP ?obsO .
+  }
+}`;
+}
+
+/**
+ * Query to delete orphan SHACL shapes
+ */
+function deleteOrphanShapesQuery(graphUri) {
+    return `${PREFIXES}
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+WITH <${graphUri}>
+DELETE {
+  ?orphanShape ?p ?o .
+  ?propShape ?propP ?propO .
+}
+WHERE {
+  {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+    ?orphanShape ?p ?o .
+    OPTIONAL {
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?propP ?propO .
+    }
+  }
+  UNION
+  {
+    ?orphanShape a sh:PropertyShape .
+    FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+    ?orphanShape ?p ?o .
+  }
+}`;
+}
+
+/**
+ * Query to delete ALL orphans (sets, shapes) in one operation
+ */
+function deleteAllOrphansQuery(graphUri) {
+    return `${PREFIXES}
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+WITH <${graphUri}>
+DELETE {
+  ?orphan ?p ?o .
+  ?child ?childP ?childO .
+}
+WHERE {
+  {
+    # Orphan Observation Sets and their observations
+    ?orphan cube:observation ?someObs .
+    FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
+    ?orphan ?p ?o .
+    OPTIONAL {
+      ?orphan cube:observation ?child .
+      ?child ?childP ?childO .
+    }
+  }
+  UNION
+  {
+    # Orphan NodeShapes and their property shapes
+    ?orphan a sh:NodeShape .
+    FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
+    ?orphan ?p ?o .
+    OPTIONAL {
+      ?orphan sh:property ?child .
+      ?child ?childP ?childO .
+    }
+  }
+  UNION
+  {
+    # Standalone Orphan PropertyShapes
+    ?orphan a sh:PropertyShape .
+    FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
+    ?orphan ?p ?o .
+  }
+}`;
+}
+
 module.exports = {
     PREFIXES,
     listCubeVersionsQuery,
@@ -343,5 +529,12 @@ module.exports = {
     cubeExistsQuery,
     countTriplesQuery,
     deleteAllOldVersionsQuery,
-    generateNewerVersionsFilter
+    generateNewerVersionsFilter,
+    // Orphan queries
+    findOrphansSummaryQuery,
+    findOrphanObservationSetsQuery,
+    findOrphanShapesQuery,
+    deleteOrphanObservationSetsQuery,
+    deleteOrphanShapesQuery,
+    deleteAllOrphansQuery
 };

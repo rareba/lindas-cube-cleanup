@@ -737,6 +737,55 @@ WHERE {
   { ?cube ... component patterns ... }
 }</pre>
 
+                    <h3>7. Orphan Detection and Cleanup</h3>
+                    <p><strong>Purpose:</strong> Find and delete orphan objects that have become disconnected from their parent cubes.</p>
+                    <p><strong>What are Orphans?</strong></p>
+                    <p>Orphans are RDF objects that were once part of a cube structure but have become disconnected, typically due to:</p>
+                    <ul class="doc-list">
+                        <li>Incomplete cube deletion (observations deleted but not their parent set)</li>
+                        <li>Failed or interrupted delete operations</li>
+                        <li>Manual data modifications that broke links</li>
+                        <li>Import errors or duplicate data</li>
+                    </ul>
+
+                    <p><strong>Types of Orphans:</strong></p>
+                    <ul class="doc-list">
+                        <li><strong>Orphan Observations:</strong> Observations not linked from any <code>cube:observationSet</code></li>
+                        <li><strong>Orphan Observation Sets:</strong> Observation sets not linked from any <code>cube:Cube</code></li>
+                        <li><strong>Orphan NodeShapes:</strong> SHACL shapes not linked via <code>cube:observationConstraint</code></li>
+                        <li><strong>Orphan PropertyShapes:</strong> Property shapes not linked via <code>sh:property</code></li>
+                    </ul>
+
+                    <p><strong>Available Queries:</strong></p>
+                    <ul class="doc-list">
+                        <li><strong>Find All Orphans - Summary:</strong> Get a count of all orphan types</li>
+                        <li><strong>Find Orphan Observations:</strong> List orphan observations with triple counts</li>
+                        <li><strong>Find Orphan Observation Sets:</strong> List orphan sets with observation counts</li>
+                        <li><strong>Find Orphan SHACL Shapes:</strong> List disconnected shapes</li>
+                        <li><strong>Delete Orphan Observation Sets:</strong> Remove orphan sets and their observations</li>
+                        <li><strong>Delete Orphan SHACL Shapes:</strong> Remove orphan shapes</li>
+                        <li><strong>Delete ALL Orphans:</strong> Comprehensive cleanup of all orphan types</li>
+                    </ul>
+
+                    <pre class="code-block sparql"># Orphan detection logic (example for observation sets):
+SELECT ?orphanSet (COUNT(?obs) AS ?observationCount)
+WHERE {
+  GRAPH &lt;GRAPH_URI&gt; {
+    ?orphanSet cube:observation ?obs .
+    # Must NOT be linked from any cube
+    FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+  }
+}
+GROUP BY ?orphanSet</pre>
+
+                    <p><strong>Best Practices:</strong></p>
+                    <ol class="doc-list numbered">
+                        <li>Always run the <strong>Find All Orphans - Summary</strong> query first</li>
+                        <li>Review specific orphan types before deletion</li>
+                        <li>Create a backup before running delete operations</li>
+                        <li>Run orphan cleanup AFTER version cleanup to catch newly created orphans</li>
+                    </ol>
+
                     <h3>Using Templates</h3>
                     <ol class="doc-list numbered">
                         <li>Set the <strong>Graph URI</strong> (e.g., <code>https://lindas.admin.ch/sfoe/cube</code>)</li>

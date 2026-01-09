@@ -243,6 +243,34 @@ node src/cli.js test-connection
 - `-b, --bulk` - Use bulk delete mode (faster, single query)
 - `--no-backup` - Skip backup creation
 
+### Orphan Detection and Cleanup
+
+Orphans are RDF objects that have become disconnected from their parent cubes. This can happen due to incomplete deletions, interrupted operations, or data corruption.
+
+```bash
+# Preview orphan objects in a graph
+node src/cli.js orphan-preview --graph https://lindas.admin.ch/sfoe/cube
+
+# Delete orphan objects
+node src/cli.js orphan-cleanup --graph https://lindas.admin.ch/sfoe/cube
+
+# Preview orphan cleanup (dry-run)
+node src/cli.js orphan-cleanup --graph https://lindas.admin.ch/sfoe/cube --dry-run
+
+# Output as JSON
+node src/cli.js orphan-preview --graph https://lindas.admin.ch/sfoe/cube --json
+```
+
+**Orphan Types Detected:**
+- **ObservationSet**: Observation sets not linked from any cube
+- **NodeShape**: SHACL shapes not linked via `cube:observationConstraint`
+- **PropertyShape**: Property shapes not linked via `sh:property`
+
+**Best Practices:**
+1. Run orphan cleanup AFTER cube version cleanup
+2. Always preview with `--dry-run` first
+3. Orphan cleanup does not require backups (orphans are by definition not connected to valid cubes)
+
 ### 2. Docker Container
 
 ```bash

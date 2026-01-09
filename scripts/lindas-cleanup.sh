@@ -398,8 +398,211 @@ cmd_list_backups() {
     log_info "To restore: $0 restore <backup-file>"
 }
 
+# =============================================================================
+# Orphan Detection Queries
+# =============================================================================
+
+get_orphan_summary_query() {
+    cat << EOF
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+SELECT ?orphanType (COUNT(DISTINCT ?orphan) AS ?count)
+WHERE {
+  GRAPH <${GRAPH_URI}> {
+    {
+      # Orphan Observation Sets
+      ?orphan cube:observation ?someObs .
+      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
+      BIND("ObservationSet" AS ?orphanType)
+    }
+    UNION
+    {
+      # Orphan NodeShapes
+      ?orphan a sh:NodeShape .
+      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
+      BIND("NodeShape" AS ?orphanType)
+    }
+    UNION
+    {
+      # Orphan PropertyShapes
+      ?orphan a sh:PropertyShape .
+      FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
+      BIND("PropertyShape" AS ?orphanType)
+    }
+  }
+}
+GROUP BY ?orphanType
+ORDER BY ?orphanType
+EOF
+}
+
+get_delete_orphan_sets_query() {
+    cat << EOF
+PREFIX cube: <https://cube.link/>
+
+WITH <${GRAPH_URI}>
+DELETE {
+  ?orphanSet ?setP ?setO .
+  ?obs ?obsP ?obsO .
+}
+WHERE {
+  ?orphanSet cube:observation ?someObs .
+  FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+  ?orphanSet ?setP ?setO .
+  OPTIONAL {
+    ?orphanSet cube:observation ?obs .
+    ?obs ?obsP ?obsO .
+  }
+}
+EOF
+}
+
+get_delete_orphan_shapes_query() {
+    cat << EOF
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+
+WITH <${GRAPH_URI}>
+DELETE {
+  ?orphanShape ?p ?o .
+  ?propShape ?propP ?propO .
+}
+WHERE {
+  {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+    ?orphanShape ?p ?o .
+    OPTIONAL {
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?propP ?propO .
+    }
+  }
+  UNION
+  {
+    ?orphanShape a sh:PropertyShape .
+    FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+    ?orphanShape ?p ?o .
+  }
+}
+EOF
+}
+
+# =============================================================================
+# Orphan Commands
+# =============================================================================
+
+cmd_orphan_preview() {
+    echo "=============================================="
+    echo "LINDAS Orphan Detection Preview"
+    echo "=============================================="
+    echo "Query endpoint: $QUERY_ENDPOINT"
+    echo "Graph URI:      $GRAPH_URI"
+    echo ""
+
+    log_info "Finding orphan objects..."
+    local QUERY=$(get_orphan_summary_query)
+    local RESULT=$(run_query "$QUERY")
+
+    local ORPHANS=$(echo "$RESULT" | jq -r '.results.bindings[] | "\(.orphanType.value)\t\(.count.value)"')
+
+    if [[ -z "$ORPHANS" ]]; then
+        log_info "No orphan objects found. Database is clean!"
+        exit 0
+    fi
+
+    echo ""
+    log_warn "Found orphan objects:"
+    echo ""
+    printf "%-20s %s\n" "ORPHAN TYPE" "COUNT"
+    echo "----------------------------------------"
+    echo "$ORPHANS" | while IFS=$'\t' read -r type count; do
+        printf "%-20s %s\n" "$type" "$count"
+    done
+    echo ""
+    log_info "Run 'orphan-cleanup' command to delete these orphans."
+}
+
+cmd_orphan_cleanup() {
+    echo "=============================================="
+    echo "LINDAS Orphan Cleanup"
+    echo "=============================================="
+    echo "Query endpoint:  $QUERY_ENDPOINT"
+    echo "Update endpoint: $UPDATE_ENDPOINT"
+    echo "Graph URI:       $GRAPH_URI"
+    echo ""
+
+    # First preview what will be deleted
+    log_info "Step 1: Detecting orphan objects..."
+    local QUERY=$(get_orphan_summary_query)
+    local RESULT=$(run_query "$QUERY")
+
+    local ORPHANS=$(echo "$RESULT" | jq -r '.results.bindings[] | "\(.orphanType.value)\t\(.count.value)"')
+
+    if [[ -z "$ORPHANS" ]]; then
+        log_info "No orphan objects found. Database is clean!"
+        exit 0
+    fi
+
+    echo ""
+    log_warn "Found orphan objects to delete:"
+    echo ""
+    printf "%-20s %s\n" "ORPHAN TYPE" "COUNT"
+    echo "----------------------------------------"
+    echo "$ORPHANS" | while IFS=$'\t' read -r type count; do
+        printf "%-20s %s\n" "$type" "$count"
+    done
+    echo ""
+
+    # Delete orphan observation sets
+    log_info "Step 2: Deleting orphan observation sets..."
+    local DELETE_SETS_QUERY=$(get_delete_orphan_sets_query)
+    if run_update "$DELETE_SETS_QUERY"; then
+        log_info "  Orphan observation sets deleted"
+    else
+        log_error "  Failed to delete orphan observation sets"
+    fi
+
+    # Delete orphan shapes
+    log_info "Step 3: Deleting orphan SHACL shapes..."
+    local DELETE_SHAPES_QUERY=$(get_delete_orphan_shapes_query)
+    if run_update "$DELETE_SHAPES_QUERY"; then
+        log_info "  Orphan shapes deleted"
+    else
+        log_error "  Failed to delete orphan shapes"
+    fi
+
+    echo ""
+    echo "=============================================="
+    log_info "Orphan cleanup complete!"
+    echo "=============================================="
+}
+
 cmd_help() {
-    head -30 "$0" | tail -25
+    cat << EOF
+LINDAS Cube Cleanup Script for GitLab CI/CD
+
+Usage:
+  ./lindas-cleanup.sh <command> [OPTIONS]
+
+Commands:
+  cleanup         Run cleanup with backup (delete old cube versions)
+  preview         Preview which cube versions would be deleted
+  restore <file>  Restore from backup file
+  list-backups    List available backup files
+  orphan-preview  Preview orphan objects in the database
+  orphan-cleanup  Delete orphan objects (sets, shapes)
+  help            Show this help message
+
+Environment variables:
+  SPARQL_QUERY_ENDPOINT   Query endpoint URL
+  SPARQL_UPDATE_ENDPOINT  Update endpoint URL
+  GRAPH_URI               Named graph URI
+  SPARQL_USERNAME         Basic auth username (optional)
+  SPARQL_PASSWORD         Basic auth password (optional)
+  BACKUP_DIR              Directory for backups (default: ./backups)
+  VERSIONS_TO_KEEP        Number of versions to keep (default: 2)
+EOF
 }
 
 # =============================================================================
@@ -421,6 +624,12 @@ case "$COMMAND" in
         ;;
     preview|dry-run)
         cmd_preview "$@"
+        ;;
+    orphan-preview|orphans)
+        cmd_orphan_preview "$@"
+        ;;
+    orphan-cleanup|cleanup-orphans)
+        cmd_orphan_cleanup "$@"
         ;;
     help|--help|-h)
         cmd_help

@@ -356,5 +356,193 @@ program
         }
     });
 
+// Orphan preview command
+program
+    .command('orphan-preview')
+    .description('Preview orphan objects that would be deleted')
+    .option('-g, --graph <uri...>', 'Named graph(s) to check')
+    .option('--json', 'Output as JSON')
+    .action(async (options, cmd) => {
+        try {
+            const globalOpts = cmd.parent.opts();
+            let config = loadConfig(globalOpts.config);
+            config = expandEnvVars(config);
+
+            // Initialize logger
+            const logger = createLogger({
+                level: globalOpts.verbose ? 'debug' : (config.logging?.level || 'info'),
+                file: config.logging?.file,
+                console: config.logging?.console !== false
+            });
+
+            // Create triplestore adapter
+            const triplestore = createAdapter(config.triplestore);
+
+            // Test connection
+            const connected = await triplestore.testConnection();
+            if (!connected) {
+                logger.error('Cannot connect to triplestore');
+                process.exit(1);
+            }
+
+            // Create backup storage (needed for cleanup service)
+            const backupStorage = createStorage(config.backup);
+            await backupStorage.initialize();
+
+            // Create cleanup service
+            const cleanup = new CleanupService(triplestore, backupStorage, {
+                versionsToKeep: 2
+            });
+
+            // Determine graphs to process
+            const graphs = options.graph || config.graphs || [];
+            if (graphs.length === 0) {
+                logger.error('No graphs specified. Use -g or configure in config file.');
+                process.exit(1);
+            }
+
+            // Find orphans in each graph
+            const results = {};
+            for (const graphUri of graphs) {
+                results[graphUri] = await cleanup.findOrphansSummary(graphUri);
+            }
+
+            if (options.json) {
+                console.log(JSON.stringify(results, null, 2));
+            } else {
+                console.log('\n' + '='.repeat(60));
+                console.log('ORPHAN DETECTION PREVIEW');
+                console.log('='.repeat(60));
+
+                for (const [graphUri, summary] of Object.entries(results)) {
+                    console.log(`\nGraph: ${graphUri}`);
+                    console.log('-'.repeat(50));
+
+                    const total = Object.values(summary).reduce((a, b) => a + b, 0);
+                    if (total === 0) {
+                        console.log('  No orphans found - graph is clean');
+                    } else {
+                        for (const [type, count] of Object.entries(summary)) {
+                            console.log(`  ${type.padEnd(20)} ${count}`);
+                        }
+                        console.log(`  ${'TOTAL'.padEnd(20)} ${total}`);
+                    }
+                }
+                console.log('\n' + '='.repeat(60));
+            }
+
+        } catch (error) {
+            console.error('Orphan preview failed:', error.message);
+            process.exit(1);
+        }
+    });
+
+// Orphan cleanup command
+program
+    .command('orphan-cleanup')
+    .description('Delete orphan objects (observation sets, shapes)')
+    .option('-g, --graph <uri...>', 'Named graph(s) to clean')
+    .option('-d, --dry-run', 'Preview without deleting')
+    .option('--json', 'Output as JSON')
+    .action(async (options, cmd) => {
+        try {
+            const globalOpts = cmd.parent.opts();
+            let config = loadConfig(globalOpts.config);
+            config = expandEnvVars(config);
+
+            // Initialize logger
+            const logger = createLogger({
+                level: globalOpts.verbose ? 'debug' : (config.logging?.level || 'info'),
+                file: config.logging?.file,
+                console: config.logging?.console !== false
+            });
+
+            // Create triplestore adapter
+            const triplestore = createAdapter(config.triplestore);
+
+            // Test connection
+            const connected = await triplestore.testConnection();
+            if (!connected) {
+                logger.error('Cannot connect to triplestore');
+                process.exit(1);
+            }
+
+            // Create backup storage (needed for cleanup service)
+            const backupStorage = createStorage(config.backup);
+            await backupStorage.initialize();
+
+            // Create cleanup service
+            const cleanup = new CleanupService(triplestore, backupStorage, {
+                versionsToKeep: 2
+            });
+
+            // Determine graphs to process
+            const graphs = options.graph || config.graphs || [];
+            if (graphs.length === 0) {
+                logger.error('No graphs specified. Use -g or configure in config file.');
+                process.exit(1);
+            }
+
+            if (options.dryRun) {
+                logger.info('DRY RUN - No changes will be made');
+            }
+
+            // Clean orphans in each graph
+            const results = {};
+            for (const graphUri of graphs) {
+                if (options.dryRun) {
+                    results[graphUri] = {
+                        before: await cleanup.findOrphansSummary(graphUri),
+                        dryRun: true
+                    };
+                } else {
+                    results[graphUri] = await cleanup.cleanupOrphans(graphUri);
+                }
+            }
+
+            if (options.json) {
+                console.log(JSON.stringify(results, null, 2));
+            } else {
+                console.log('\n' + '='.repeat(60));
+                console.log(options.dryRun ? 'ORPHAN CLEANUP PREVIEW' : 'ORPHAN CLEANUP RESULTS');
+                console.log('='.repeat(60));
+
+                for (const [graphUri, result] of Object.entries(results)) {
+                    console.log(`\nGraph: ${graphUri}`);
+                    console.log('-'.repeat(50));
+
+                    if (options.dryRun) {
+                        const total = Object.values(result.before).reduce((a, b) => a + b, 0);
+                        if (total === 0) {
+                            console.log('  No orphans found');
+                        } else {
+                            console.log('  Would delete:');
+                            for (const [type, count] of Object.entries(result.before)) {
+                                console.log(`    ${type.padEnd(20)} ${count}`);
+                            }
+                        }
+                    } else {
+                        const totalDeleted = Object.values(result.deleted || {}).reduce((a, b) => a + b, 0);
+                        if (totalDeleted === 0) {
+                            console.log('  No orphans found');
+                        } else {
+                            console.log('  Deleted:');
+                            for (const [type, count] of Object.entries(result.deleted)) {
+                                if (count > 0) {
+                                    console.log(`    ${type.padEnd(20)} ${count}`);
+                                }
+                            }
+                        }
+                    }
+                }
+                console.log('\n' + '='.repeat(60));
+            }
+
+        } catch (error) {
+            console.error('Orphan cleanup failed:', error.message);
+            process.exit(1);
+        }
+    });
+
 // Parse arguments
 program.parse();

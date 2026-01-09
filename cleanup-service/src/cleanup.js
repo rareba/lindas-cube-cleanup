@@ -348,6 +348,142 @@ class CleanupService {
         return parseInt(result.results.bindings[0]?.count?.value || '0', 10);
     }
 
+    // =========================================================================
+    // Orphan Detection and Cleanup Methods
+    // =========================================================================
+
+    /**
+     * Find orphan objects summary in a graph
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<Object>} - Summary of orphans by type
+     */
+    async findOrphansSummary(graphUri) {
+        this.logger.info(`Finding orphan objects in graph: ${graphUri}`);
+        const query = sparql.findOrphansSummaryQuery(graphUri);
+        const result = await this.triplestore.query(query);
+
+        const summary = {};
+        for (const binding of result.results.bindings) {
+            const type = binding.orphanType.value;
+            const count = parseInt(binding.count.value, 10);
+            summary[type] = count;
+        }
+
+        const totalOrphans = Object.values(summary).reduce((a, b) => a + b, 0);
+        this.logger.info(`Found ${totalOrphans} total orphan objects`);
+
+        return summary;
+    }
+
+    /**
+     * Find orphan observation sets with details
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<Array>} - List of orphan observation sets
+     */
+    async findOrphanObservationSets(graphUri) {
+        const query = sparql.findOrphanObservationSetsQuery(graphUri);
+        const result = await this.triplestore.query(query);
+
+        return result.results.bindings.map(binding => ({
+            uri: binding.orphanSet.value,
+            observationCount: parseInt(binding.observationCount.value, 10),
+            totalTriples: parseInt(binding.totalTriples.value, 10)
+        }));
+    }
+
+    /**
+     * Find orphan SHACL shapes with details
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<Array>} - List of orphan shapes
+     */
+    async findOrphanShapes(graphUri) {
+        const query = sparql.findOrphanShapesQuery(graphUri);
+        const result = await this.triplestore.query(query);
+
+        return result.results.bindings.map(binding => ({
+            uri: binding.orphanShape.value,
+            shapeType: binding.shapeType.value,
+            tripleCount: parseInt(binding.tripleCount.value, 10)
+        }));
+    }
+
+    /**
+     * Delete orphan observation sets and their observations
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<void>}
+     */
+    async deleteOrphanObservationSets(graphUri) {
+        this.logger.info(`Deleting orphan observation sets from: ${graphUri}`);
+        const query = sparql.deleteOrphanObservationSetsQuery(graphUri);
+        await this.triplestore.update(query);
+        this.logger.info('Orphan observation sets deleted');
+    }
+
+    /**
+     * Delete orphan SHACL shapes
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<void>}
+     */
+    async deleteOrphanShapes(graphUri) {
+        this.logger.info(`Deleting orphan SHACL shapes from: ${graphUri}`);
+        const query = sparql.deleteOrphanShapesQuery(graphUri);
+        await this.triplestore.update(query);
+        this.logger.info('Orphan shapes deleted');
+    }
+
+    /**
+     * Delete all orphans in one operation
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<void>}
+     */
+    async deleteAllOrphans(graphUri) {
+        this.logger.info(`Deleting all orphans from: ${graphUri}`);
+        const query = sparql.deleteAllOrphansQuery(graphUri);
+        await this.triplestore.update(query);
+        this.logger.info('All orphans deleted');
+    }
+
+    /**
+     * Run full orphan cleanup for a graph
+     * @param {string} graphUri - Named graph URI
+     * @returns {Promise<Object>} - Cleanup results
+     */
+    async cleanupOrphans(graphUri) {
+        const results = {
+            graphUri,
+            before: {},
+            after: {},
+            deleted: {}
+        };
+
+        // Get orphan counts before cleanup
+        results.before = await this.findOrphansSummary(graphUri);
+        const totalBefore = Object.values(results.before).reduce((a, b) => a + b, 0);
+
+        if (totalBefore === 0) {
+            this.logger.info('No orphans found - graph is clean');
+            return results;
+        }
+
+        this.logger.info(`Found ${totalBefore} orphan objects to delete`);
+
+        // Delete all orphans
+        await this.deleteAllOrphans(graphUri);
+
+        // Get orphan counts after cleanup
+        results.after = await this.findOrphansSummary(graphUri);
+        const totalAfter = Object.values(results.after).reduce((a, b) => a + b, 0);
+
+        // Calculate what was deleted
+        for (const type of Object.keys(results.before)) {
+            results.deleted[type] = results.before[type] - (results.after[type] || 0);
+        }
+
+        this.logger.info(`Orphan cleanup complete: ${totalBefore - totalAfter} objects deleted`);
+
+        return results;
+    }
+
     /**
      * Log cleanup summary
      */

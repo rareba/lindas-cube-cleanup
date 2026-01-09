@@ -221,13 +221,56 @@ FILTER EXISTS {
 3. **web-app/public/index.html**
    - Updated Documentation tab with new auto-detect query explanation
 
+## Enhancement 8: Orphan Detection and Cleanup
+
+### Feature Overview
+Added comprehensive orphan detection and cleanup functionality to find and delete disconnected RDF objects in the database.
+
+### What Are Orphans?
+Orphans are RDF objects that have become disconnected from their parent cubes:
+- **Orphan Observation Sets**: Observation sets not linked from any `cube:Cube`
+- **Orphan NodeShapes**: SHACL shapes not linked via `cube:observationConstraint`
+- **Orphan PropertyShapes**: Property shapes not linked via `sh:property`
+- **Orphan Observations**: Observations not linked from any `cube:observationSet`
+
+### New Query Templates (Query Editor)
+| Template | Type | Purpose |
+|----------|------|---------|
+| Find Orphan Observations | SELECT | List orphan observations with triple counts |
+| Find Orphan Observation Sets | SELECT | List orphan sets with observation counts |
+| Find Orphan SHACL Shapes | SELECT | List disconnected NodeShapes and PropertyShapes |
+| Find All Orphans - Summary | SELECT | Get counts of all orphan types |
+| Delete Orphan Observation Sets | UPDATE | Remove orphan sets and their observations |
+| Delete Orphan SHACL Shapes | UPDATE | Remove disconnected shapes |
+| Delete ALL Orphans | UPDATE | Comprehensive orphan cleanup |
+
+### Files Modified
+1. **web-app/public/app.js** - Added 7 new query templates for orphan detection/cleanup
+2. **web-app/public/index.html** - Added Documentation section 7 explaining orphan queries
+3. **scripts/lindas-cleanup.sh** - Added `orphan-preview` and `orphan-cleanup` commands
+4. **scripts/.gitlab-ci.yml** - Added orphan-preview, orphan-cleanup, and full-cleanup jobs
+5. **cleanup-service/src/utils/sparql.js** - Added 6 orphan query functions
+6. **cleanup-service/src/cleanup.js** - Added orphan detection and cleanup methods
+7. **cleanup-service/src/cli.js** - Added `orphan-preview` and `orphan-cleanup` CLI commands
+
+### Usage
+1. **Web App**: Go to Query Editor tab, select an orphan template
+2. **Bash Script**: `./lindas-cleanup.sh orphan-preview` or `./lindas-cleanup.sh orphan-cleanup`
+3. **Cleanup Service**: `npx lindas-cleanup orphan-preview -g <graph-uri>` or `npx lindas-cleanup orphan-cleanup -g <graph-uri>`
+
+### Best Practices
+1. Always run preview queries first to see what would be deleted
+2. Run orphan cleanup AFTER cube version cleanup (orphans may be created during version deletion)
+3. Back up important data before running delete operations
+
 ## Recommendations for Demo
 
 1. **Start Fuseki first**: Ensure Fuseki is running before launching the web app
 2. **Import sample data**: Use the "Import Sample Data" button to have test data
 3. **Flow suggestion**: Setup -> Import -> Explore -> Cleanup -> verify with Query Editor
 4. **Backup safety**: Backups are created automatically before deletions
+5. **Orphan cleanup**: After deleting cube versions, run orphan detection to find any disconnected objects
 
 ## Conclusion
 
-All features are working correctly after the fixes applied during this testing session. The application is ready for the demo.
+All features are working correctly after the fixes applied during this testing session. The application is ready for the demo, including the new orphan detection and cleanup functionality.

@@ -1800,6 +1800,332 @@ WHERE {
       ?obs ?obsP ?obsO }
   }
 }`
+    },
+
+    // ========== ORPHAN DETECTION AND CLEANUP ==========
+
+    'find-orphan-observations': {
+        name: 'Find Orphan Observations',
+        type: 'select',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# Find observations that are not linked from any observation set
+# These are "orphan" observations that may have been left behind after incomplete deletions
+
+SELECT ?orphanObs (COUNT(?p) AS ?tripleCount)
+WHERE {
+  GRAPH <GRAPH_URI> {
+    # Find subjects that have observation-like predicates
+    # Observations typically have many data properties
+    ?orphanObs ?p ?o .
+
+    # Exclude known entity types (cubes, shapes, sets)
+    FILTER NOT EXISTS { ?orphanObs a cube:Cube }
+    FILTER NOT EXISTS { ?orphanObs a <http://www.w3.org/ns/shacl#NodeShape> }
+    FILTER NOT EXISTS { ?orphanObs a <http://www.w3.org/ns/shacl#PropertyShape> }
+
+    # Must NOT be linked from any observation set
+    FILTER NOT EXISTS { ?anySet cube:observation ?orphanObs }
+
+    # Must NOT be linked from any cube directly
+    FILTER NOT EXISTS { ?anyCube ?anyPred ?orphanObs . ?anyCube a cube:Cube }
+
+    # Filter to likely observations: URIs containing common observation patterns
+    # or blank nodes with multiple properties
+    FILTER(
+      REGEX(STR(?orphanObs), "/observation") ||
+      REGEX(STR(?orphanObs), "/obs/") ||
+      isBlank(?orphanObs)
+    )
+  }
+}
+GROUP BY ?orphanObs
+HAVING (COUNT(?p) > 1)
+ORDER BY DESC(?tripleCount)
+LIMIT 1000`
+    },
+
+    'find-orphan-observation-sets': {
+        name: 'Find Orphan Observation Sets',
+        type: 'select',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# Find observation sets that are not linked from any cube
+# These may have been left behind after cube deletion
+
+SELECT ?orphanSet (COUNT(DISTINCT ?obs) AS ?observationCount) (COUNT(?p) AS ?totalTriples)
+WHERE {
+  GRAPH <GRAPH_URI> {
+    # Find observation sets (either by type or by having cube:observation links)
+    {
+      ?orphanSet a cube:ObservationSet .
+    }
+    UNION
+    {
+      ?orphanSet cube:observation ?someObs .
+    }
+
+    # Get properties for counting
+    ?orphanSet ?p ?o .
+
+    # Count observations
+    OPTIONAL { ?orphanSet cube:observation ?obs }
+
+    # Must NOT be linked from any cube
+    FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+  }
+}
+GROUP BY ?orphanSet
+ORDER BY DESC(?observationCount)
+LIMIT 100`
+    },
+
+    'find-orphan-shapes': {
+        name: 'Find Orphan SHACL Shapes',
+        type: 'select',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# Find SHACL shapes (NodeShape, PropertyShape) not linked from any cube
+# These may have been left behind after cube deletion
+
+SELECT ?orphanShape ?shapeType (COUNT(?p) AS ?tripleCount)
+WHERE {
+  GRAPH <GRAPH_URI> {
+    # Find shapes
+    {
+      ?orphanShape a sh:NodeShape .
+      BIND("NodeShape" AS ?shapeType)
+
+      # NodeShapes must not be linked via cube:observationConstraint
+      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+    }
+    UNION
+    {
+      ?orphanShape a sh:PropertyShape .
+      BIND("PropertyShape" AS ?shapeType)
+
+      # PropertyShapes must not be linked via sh:property from any NodeShape that is linked to a cube
+      FILTER NOT EXISTS {
+        ?nodeShape sh:property ?orphanShape .
+        ?someCube cube:observationConstraint ?nodeShape .
+      }
+      # Also check for orphan PropertyShapes not linked from ANY shape
+      FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+    }
+
+    ?orphanShape ?p ?o .
+  }
+}
+GROUP BY ?orphanShape ?shapeType
+ORDER BY ?shapeType DESC(?tripleCount)
+LIMIT 100`
+    },
+
+    'find-all-orphans-summary': {
+        name: 'Find All Orphans - Summary',
+        type: 'select',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# Comprehensive orphan detection - returns counts by type
+# Use this to get an overview before running specific orphan queries
+
+SELECT
+  ?orphanType
+  (COUNT(DISTINCT ?orphan) AS ?orphanCount)
+  (SUM(?tripleCount) AS ?totalTriples)
+WHERE {
+  GRAPH <GRAPH_URI> {
+    {
+      # Orphan Observation Sets
+      SELECT ("ObservationSet" AS ?orphanType) ?orphan (COUNT(?p) AS ?tripleCount)
+      WHERE {
+        {
+          ?orphan a cube:ObservationSet .
+        }
+        UNION
+        {
+          ?orphan cube:observation ?someObs .
+        }
+        ?orphan ?p ?o .
+        FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
+      }
+      GROUP BY ?orphan
+    }
+    UNION
+    {
+      # Orphan NodeShapes
+      SELECT ("NodeShape" AS ?orphanType) ?orphan (COUNT(?p) AS ?tripleCount)
+      WHERE {
+        ?orphan a sh:NodeShape .
+        ?orphan ?p ?o .
+        FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
+      }
+      GROUP BY ?orphan
+    }
+    UNION
+    {
+      # Orphan PropertyShapes
+      SELECT ("PropertyShape" AS ?orphanType) ?orphan (COUNT(?p) AS ?tripleCount)
+      WHERE {
+        ?orphan a sh:PropertyShape .
+        ?orphan ?p ?o .
+        FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
+      }
+      GROUP BY ?orphan
+    }
+  }
+}
+GROUP BY ?orphanType
+ORDER BY ?orphanType`
+    },
+
+    'delete-orphan-observation-sets': {
+        name: 'Delete Orphan Observation Sets - DESTRUCTIVE!',
+        type: 'update',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# WARNING: This deletes all observation sets not linked to any cube
+# along with all their observations
+# Run "Find Orphan Observation Sets" first to preview what will be deleted!
+
+WITH <GRAPH_URI>
+DELETE {
+  ?orphanSet ?setP ?setO .
+  ?obs ?obsP ?obsO .
+}
+WHERE {
+  # Find orphan observation sets
+  {
+    ?orphanSet a cube:ObservationSet .
+  }
+  UNION
+  {
+    ?orphanSet cube:observation ?someObs .
+  }
+
+  # Must NOT be linked from any cube
+  FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+
+  # Get all triples for the set
+  ?orphanSet ?setP ?setO .
+
+  # Get all observations and their triples
+  OPTIONAL {
+    ?orphanSet cube:observation ?obs .
+    ?obs ?obsP ?obsO .
+  }
+}`
+    },
+
+    'delete-orphan-shapes': {
+        name: 'Delete Orphan SHACL Shapes - DESTRUCTIVE!',
+        type: 'update',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# WARNING: This deletes all SHACL shapes not linked to any cube
+# Run "Find Orphan SHACL Shapes" first to preview what will be deleted!
+
+WITH <GRAPH_URI>
+DELETE {
+  ?orphanShape ?p ?o .
+  ?propShape ?propP ?propO .
+}
+WHERE {
+  {
+    # Delete orphan NodeShapes and their property shapes
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+
+    ?orphanShape ?p ?o .
+
+    # Also delete any property shapes attached to this orphan node shape
+    OPTIONAL {
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?propP ?propO .
+    }
+  }
+  UNION
+  {
+    # Delete standalone orphan PropertyShapes
+    ?orphanShape a sh:PropertyShape .
+    FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+
+    ?orphanShape ?p ?o .
+    BIND(?orphanShape AS ?propShape)
+    BIND(?p AS ?propP)
+    BIND(?o AS ?propO)
+  }
+}`
+    },
+
+    'delete-all-orphans': {
+        name: 'Delete ALL Orphans (Sets + Shapes) - DESTRUCTIVE!',
+        type: 'update',
+        query: `PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# WARNING: This is a comprehensive orphan cleanup query
+# It deletes ALL orphaned objects: observation sets, observations, and SHACL shapes
+# ALWAYS run "Find All Orphans - Summary" first to preview!
+# Consider backing up your data before running this query
+
+WITH <GRAPH_URI>
+DELETE {
+  ?orphan ?p ?o .
+  ?child ?childP ?childO .
+}
+WHERE {
+  {
+    # Orphan Observation Sets and their observations
+    {
+      ?orphan a cube:ObservationSet .
+    }
+    UNION
+    {
+      ?orphan cube:observation ?someObs .
+    }
+    FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
+
+    ?orphan ?p ?o .
+
+    OPTIONAL {
+      ?orphan cube:observation ?child .
+      ?child ?childP ?childO .
+    }
+  }
+  UNION
+  {
+    # Orphan NodeShapes and their property shapes
+    ?orphan a sh:NodeShape .
+    FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
+
+    ?orphan ?p ?o .
+
+    OPTIONAL {
+      ?orphan sh:property ?child .
+      ?child ?childP ?childO .
+    }
+  }
+  UNION
+  {
+    # Standalone Orphan PropertyShapes
+    ?orphan a sh:PropertyShape .
+    FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
+
+    ?orphan ?p ?o .
+    # No children for property shapes
+  }
+}`
     }
 };
 

@@ -102,3 +102,46 @@ restore:
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
+
+# -----------------------------------------------------------------------------
+# Preview orphan objects (safe, read-only)
+# -----------------------------------------------------------------------------
+orphan-preview:
+  stage: preview
+  script:
+    - ./scripts/lindas-cleanup.sh orphan-preview
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+
+# -----------------------------------------------------------------------------
+# Clean up orphan objects (manual trigger)
+# -----------------------------------------------------------------------------
+orphan-cleanup:
+  stage: cleanup
+  script:
+    - echo "Starting orphan cleanup..."
+    - ./scripts/lindas-cleanup.sh orphan-cleanup
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+
+# -----------------------------------------------------------------------------
+# Full cleanup: old versions + orphans (scheduled)
+# -----------------------------------------------------------------------------
+full-cleanup:
+  stage: cleanup
+  script:
+    - echo "Starting full cleanup..."
+    - echo "Step 1: Cleaning up old cube versions..."
+    - ./scripts/lindas-cleanup.sh cleanup
+    - echo "Step 2: Cleaning up orphan objects..."
+    - ./scripts/lindas-cleanup.sh orphan-cleanup
+  artifacts:
+    paths:
+      - backups/
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      variables:
+        FULL_CLEANUP: "true"
