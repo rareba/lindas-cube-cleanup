@@ -848,7 +848,6 @@ async function loadLocalCubes() {
                         <tr>
                             <th>Cube</th>
                             <th>Version</th>
-                            <th>Created</th>
                             <th>Title</th>
                         </tr>
                     </thead>
@@ -857,7 +856,6 @@ async function loadLocalCubes() {
                             <tr>
                                 <td class="mono">${row.baseCube?.value.split('/').pop() || ''}</td>
                                 <td>${row.version?.value || ''}</td>
-                                <td>${row.dateCreated?.value?.split('T')[0] || ''}</td>
                                 <td>${row.title?.value || ''}</td>
                             </tr>
                         `).join('')}
@@ -1025,6 +1023,10 @@ async function selectCubeForDeletion(cubeUri) {
 }
 
 async function previewCubeDeletion(cubeUri) {
+    // Show the preview container
+    document.getElementById('selected-cube-name').textContent = cubeUri.split('/').slice(-2).join('/');
+    document.getElementById('selected-cube-preview').classList.remove('hidden');
+
     const container = document.getElementById('triple-breakdown');
     container.innerHTML = '<p>Loading...</p>';
 
@@ -1072,10 +1074,6 @@ async function deleteSelectedCube() {
         return;
     }
 
-    if (!confirm(`Are you sure you want to delete this cube version?\n\n${state.selectedCubeForDeletion}`)) {
-        return;
-    }
-
     await deleteCube(state.selectedCubeForDeletion);
 }
 
@@ -1086,10 +1084,6 @@ async function deleteAllOldVersions() {
 
     if (cubes.length === 0) {
         alert('No cubes selected for deletion');
-        return;
-    }
-
-    if (!confirm(`Are you sure you want to delete ${cubes.length} old cube versions?\n\nBackups will be created automatically.`)) {
         return;
     }
 
@@ -1770,10 +1764,9 @@ WHERE {
     ?shape ?shapeP ?shapeO }
   UNION
   # Delete shape properties (recursive)
-  { ?cube cube:observationConstraint/sh:property ?prop .
-    ?prop (<>|!<>)* ?propNode .
-    ?propNode ?propP ?propO .
-    BIND(?propNode AS ?prop) }
+  { ?cube cube:observationConstraint/sh:property ?directProp .
+    ?directProp (<>|!<>)* ?prop .
+    ?prop ?propP ?propO }
   UNION
   # Delete observation sets
   { ?cube cube:observationSet ?set .
@@ -1949,10 +1942,17 @@ function loadQueryTemplate() {
     // Replace placeholders with actual values
     let query = tmpl.query;
     const graphUri = graphInput.value || 'https://lindas.admin.ch/sfoe/cube';
-    const cubeUri = cubeInput.value || '<CUBE_URI>';
+    const cubeUri = cubeInput.value;
 
+    // Always replace GRAPH_URI
+    query = query.replace(/<GRAPH_URI>/g, '<' + graphUri + '>');
     query = query.replace(/GRAPH_URI/g, graphUri);
-    query = query.replace(/CUBE_URI/g, cubeUri);
+
+    // Only replace CUBE_URI if we have a value, otherwise leave placeholder for executeQuery to handle
+    if (cubeUri) {
+        query = query.replace(/<CUBE_URI>/g, '<' + cubeUri + '>');
+        query = query.replace(/CUBE_URI/g, cubeUri);
+    }
 
     queryTextarea.value = query;
 
@@ -1979,22 +1979,36 @@ function onTemplateChange() {
 // Execute query
 async function executeQuery() {
     const queryTextarea = document.getElementById('query-text');
-    const query = queryTextarea.value.trim();
+    let query = queryTextarea.value.trim();
 
     if (!query) {
-        alert('Please enter a query');
+        showQueryStatus('Please enter a query', 'error');
         return;
     }
 
-    const queryType = document.querySelector('input[name="query-type"]:checked').value;
+    // Replace any remaining placeholders with current input values
+    const graphInput = document.getElementById('query-graph');
+    const cubeInput = document.getElementById('query-cube-uri');
+    const graphUri = graphInput.value || 'https://lindas.admin.ch/sfoe/cube';
+    const cubeUri = cubeInput.value;
 
-    // Confirm for UPDATE queries
-    if (queryType === 'update') {
-        if (!confirm('WARNING: This is an UPDATE query that will modify data. Are you sure you want to execute it?')) {
+    // Check if query still has CUBE_URI placeholder and no cube URI is provided
+    if (query.includes('<CUBE_URI>') || query.includes('CUBE_URI')) {
+        if (!cubeUri) {
+            showQueryStatus('Please enter a Cube URI. This query requires a specific cube to be selected.', 'error');
             return;
         }
+        query = query.replace(/<CUBE_URI>/g, '<' + cubeUri + '>');
+        query = query.replace(/CUBE_URI/g, cubeUri);
     }
 
+    // Replace GRAPH_URI placeholder
+    query = query.replace(/<GRAPH_URI>/g, '<' + graphUri + '>');
+    query = query.replace(/GRAPH_URI/g, graphUri);
+
+    const queryType = document.querySelector('input[name="query-type"]:checked').value;
+
+    // No confirmation needed - proceed directly with execution
     showQueryStatus('Executing query...', 'info');
 
     try {
