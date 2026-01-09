@@ -13,6 +13,9 @@
             <p class="subtitle">Demo Tool - Delete old cube versions while preserving the newest 2</p>
         </div>
         <div class="connection-status">
+            <div id="mode-indicator" class="mode-indicator local">
+                <span class="mode-badge">LOCAL</span>
+            </div>
             <div id="fuseki-status" class="status-indicator disconnected">
                 <span class="status-dot"></span>
                 <span class="status-text">Fuseki: Disconnected</span>
@@ -33,23 +36,79 @@
     <main>
         <!-- Setup Tab -->
         <section id="setup" class="tab-content active">
-            <div class="card">
-                <h2>Fuseki Configuration</h2>
-                <p class="description">Configure the connection to your local Apache Fuseki instance.</p>
+            <!-- Cloud Mode Warning Banner -->
+            <div id="cloud-warning-banner" class="warning-banner hidden">
+                <div class="warning-icon">&#9888;</div>
+                <div class="warning-content">
+                    <strong>Cloud Mode Active</strong>
+                    <p>You are connected to a cloud/production triplestore. All changes will affect live data. Proceed with caution.</p>
+                </div>
+                <button id="btn-switch-to-local" class="btn btn-small btn-warning">Switch to Local</button>
+            </div>
 
-                <div class="form-group">
-                    <label for="fuseki-endpoint">Fuseki Endpoint:</label>
-                    <input type="text" id="fuseki-endpoint" value="http://localhost:3030" placeholder="http://localhost:3030">
+            <div class="card">
+                <h2>Triplestore Configuration</h2>
+                <p class="description">Configure the connection to your triplestore instance.</p>
+
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label for="triplestore-type">Triplestore Type:</label>
+                        <select id="triplestore-type" class="select-input">
+                            <option value="fuseki" selected>Apache Fuseki</option>
+                            <option value="stardog">Stardog</option>
+                            <option value="graphdb">GraphDB</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label for="triplestore-mode">Mode:</label>
+                        <select id="triplestore-mode" class="select-input">
+                            <option value="local" selected>Local (Development)</option>
+                            <option value="cloud">Cloud (Production)</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="form-group">
-                    <label for="fuseki-dataset">Dataset Name:</label>
-                    <input type="text" id="fuseki-dataset" value="lindas" placeholder="lindas">
+                    <label for="fuseki-endpoint">Endpoint URL:</label>
+                    <input type="text" id="fuseki-endpoint" value="http://localhost:3030" placeholder="http://localhost:3030">
+                    <small id="endpoint-hint" class="form-hint">For local Fuseki, use http://localhost:3030</small>
+                </div>
+
+                <div class="form-row" id="fuseki-dataset-row">
+                    <div class="form-group full">
+                        <label for="fuseki-dataset">Dataset Name:</label>
+                        <input type="text" id="fuseki-dataset" value="lindas" placeholder="lindas">
+                    </div>
+                </div>
+
+                <div class="form-row hidden" id="stardog-database-row">
+                    <div class="form-group full">
+                        <label for="stardog-database">Database Name:</label>
+                        <input type="text" id="stardog-database" value="mydb" placeholder="mydb">
+                    </div>
+                </div>
+
+                <div class="form-row hidden" id="graphdb-repository-row">
+                    <div class="form-group full">
+                        <label for="graphdb-repository">Repository Name:</label>
+                        <input type="text" id="graphdb-repository" value="test" placeholder="test">
+                    </div>
+                </div>
+
+                <div class="form-row hidden" id="auth-row">
+                    <div class="form-group half">
+                        <label for="auth-username">Username:</label>
+                        <input type="text" id="auth-username" value="" placeholder="admin">
+                    </div>
+                    <div class="form-group half">
+                        <label for="auth-password">Password:</label>
+                        <input type="password" id="auth-password" value="" placeholder="password">
+                    </div>
                 </div>
 
                 <div class="button-group">
                     <button id="btn-check-fuseki" class="btn btn-primary">Check Connection</button>
-                    <button id="btn-create-dataset" class="btn btn-secondary">Create Dataset</button>
+                    <button id="btn-create-dataset" class="btn btn-secondary" id="btn-create-dataset-container">Create Dataset</button>
                 </div>
 
                 <div id="fuseki-info" class="info-box hidden"></div>
@@ -399,6 +458,7 @@
 
                 <div class="button-group">
                     <button id="btn-restore-backup" class="btn btn-primary">Restore This Backup</button>
+                    <button id="btn-export-backup" class="btn btn-secondary">Export for External Use</button>
                     <button id="btn-delete-backup" class="btn btn-danger">Delete Backup</button>
                 </div>
 
@@ -407,6 +467,31 @@
                         <div id="restore-progress-fill" class="progress-fill"></div>
                     </div>
                     <p id="restore-status" class="status-text"></p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Import Backup File</h2>
+                <p class="description">Upload a backup file (exported .lindas.json or raw .nt file) to restore data to your triplestore.</p>
+
+                <div class="upload-area" id="upload-area">
+                    <div class="upload-icon">&#128193;</div>
+                    <p>Drag and drop a backup file here, or click to select</p>
+                    <input type="file" id="backup-file-input" accept=".json,.nt,.ntriples" style="display: none;">
+                    <button id="btn-select-file" class="btn btn-secondary">Select File</button>
+                </div>
+
+                <div id="upload-preview" class="info-box hidden">
+                    <h3>File Preview</h3>
+                    <div id="upload-preview-info"></div>
+                    <div class="form-group">
+                        <label for="import-target-graph">Target Graph URI (optional - leave empty to use original):</label>
+                        <input type="text" id="import-target-graph" placeholder="Use original graph from metadata">
+                    </div>
+                    <div class="button-group">
+                        <button id="btn-import-file" class="btn btn-primary">Import to Current Triplestore</button>
+                        <button id="btn-cancel-import" class="btn btn-secondary">Cancel</button>
+                    </div>
                 </div>
             </div>
         </section>

@@ -2,6 +2,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 const path = require('path');
 const fs = require('fs');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -9,17 +10,76 @@ const PORT = process.env.PORT || 3001;
 // Backup directory
 const BACKUP_DIR = path.join(__dirname, 'backups');
 const BACKUP_RETENTION_DAYS = 7;
+const EXPORT_DIR = path.join(__dirname, 'exports');
 
-// Ensure backup directory exists
+// Ensure directories exist
 if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
 }
+if (!fs.existsSync(EXPORT_DIR)) {
+    fs.mkdirSync(EXPORT_DIR, { recursive: true });
+}
+
+// Configure multer for file uploads
+const upload = multer({ dest: path.join(__dirname, 'uploads') });
 
 // Middleware
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Default endpoints
+// =============================================================================
+// TRIPLESTORE CONFIGURATION
+// =============================================================================
+
+// Default endpoints for different triplestore types
+const TRIPLESTORE_DEFAULTS = {
+    fuseki: {
+        local: {
+            baseUrl: 'http://localhost:3030',
+            queryPath: '/{dataset}/query',
+            updatePath: '/{dataset}/update',
+            dataPath: '/{dataset}/data',
+            datasetsPath: '/$/datasets'
+        },
+        cloud: {
+            baseUrl: 'https://lindas.admin.ch',
+            queryPath: '/query',
+            updatePath: '/update',
+            dataPath: '/data'
+        }
+    },
+    stardog: {
+        local: {
+            baseUrl: 'http://localhost:5820',
+            queryPath: '/{database}/query',
+            updatePath: '/{database}/update',
+            dataPath: '/{database}',
+            defaultCredentials: { username: 'admin', password: 'admin' }
+        },
+        cloud: {
+            baseUrl: 'https://sd-xxxxxx.stardog.cloud:5820',
+            queryPath: '/{database}/query',
+            updatePath: '/{database}/update',
+            dataPath: '/{database}'
+        }
+    },
+    graphdb: {
+        local: {
+            baseUrl: 'http://localhost:7200',
+            queryPath: '/repositories/{repository}',
+            updatePath: '/repositories/{repository}/statements',
+            dataPath: '/repositories/{repository}/statements',
+            repositoriesPath: '/rest/repositories'
+        },
+        cloud: {
+            baseUrl: 'https://your-instance.graphdb.cloud',
+            queryPath: '/repositories/{repository}',
+            updatePath: '/repositories/{repository}/statements',
+            dataPath: '/repositories/{repository}/statements'
+        }
+    }
+};
+
 const LINDAS_ENDPOINT = 'https://lindas.admin.ch/query';
 const DEFAULT_FUSEKI_ENDPOINT = 'http://localhost:3030';
 
@@ -32,11 +92,68 @@ function loadQuery(queryName) {
     return null;
 }
 
+// =============================================================================
+// TRIPLESTORE-AWARE SPARQL EXECUTION
+// =============================================================================
+
+/**
+ * Build endpoint URLs based on triplestore type
+ */
+function buildEndpoints(config) {
+    const { type, mode, baseUrl, dataset, database, repository, username, password } = config;
+    const defaults = TRIPLESTORE_DEFAULTS[type]?.[mode] || TRIPLESTORE_DEFAULTS.fuseki.local;
+
+    const base = baseUrl || defaults.baseUrl;
+    let queryEndpoint, updateEndpoint, dataEndpoint;
+
+    switch (type) {
+        case 'stardog':
+            const db = database || 'mydb';
+            queryEndpoint = `${base}${defaults.queryPath.replace('{database}', db)}`;
+            updateEndpoint = `${base}${defaults.updatePath.replace('{database}', db)}`;
+            dataEndpoint = `${base}${defaults.dataPath.replace('{database}', db)}`;
+            break;
+        case 'graphdb':
+            const repo = repository || 'test';
+            queryEndpoint = `${base}${defaults.queryPath.replace('{repository}', repo)}`;
+            updateEndpoint = `${base}${defaults.updatePath.replace('{repository}', repo)}`;
+            dataEndpoint = `${base}${defaults.dataPath.replace('{repository}', repo)}`;
+            break;
+        case 'fuseki':
+        default:
+            const ds = dataset || 'lindas';
+            if (defaults.queryPath.includes('{dataset}')) {
+                queryEndpoint = `${base}${defaults.queryPath.replace('{dataset}', ds)}`;
+                updateEndpoint = `${base}${defaults.updatePath.replace('{dataset}', ds)}`;
+                dataEndpoint = `${base}${defaults.dataPath.replace('{dataset}', ds)}`;
+            } else {
+                queryEndpoint = `${base}${defaults.queryPath}`;
+                updateEndpoint = `${base}${defaults.updatePath}`;
+                dataEndpoint = `${base}${defaults.dataPath}`;
+            }
+            break;
+    }
+
+    return { queryEndpoint, updateEndpoint, dataEndpoint, username, password };
+}
+
+/**
+ * Build auth headers based on credentials
+ */
+function buildAuthHeaders(username, password) {
+    if (username && password) {
+        const credentials = Buffer.from(`${username}:${password}`).toString('base64');
+        return { 'Authorization': `Basic ${credentials}` };
+    }
+    return {};
+}
+
 // Execute SPARQL SELECT query
-async function executeSparqlSelect(endpoint, query, graphUri = null) {
+async function executeSparqlSelect(endpoint, query, auth = {}) {
     const headers = {
         'Accept': 'application/sparql-results+json',
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ...buildAuthHeaders(auth.username, auth.password)
     };
 
     const response = await fetch(endpoint, {
@@ -54,14 +171,13 @@ async function executeSparqlSelect(endpoint, query, graphUri = null) {
 }
 
 // Execute SPARQL UPDATE query
-async function executeSparqlUpdate(endpoint, query) {
-    const updateEndpoint = endpoint.endsWith('/update') ? endpoint : `${endpoint}/update`;
-
+async function executeSparqlUpdate(endpoint, query, auth = {}) {
     const headers = {
-        'Content-Type': 'application/sparql-update'
+        'Content-Type': 'application/sparql-update',
+        ...buildAuthHeaders(auth.username, auth.password)
     };
 
-    const response = await fetch(updateEndpoint, {
+    const response = await fetch(endpoint, {
         method: 'POST',
         headers: headers,
         body: query
@@ -76,10 +192,11 @@ async function executeSparqlUpdate(endpoint, query) {
 }
 
 // Execute SPARQL CONSTRUCT query to get triples
-async function executeSparqlConstruct(endpoint, query) {
+async function executeSparqlConstruct(endpoint, query, auth = {}) {
     const headers = {
         'Accept': 'application/n-triples',
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ...buildAuthHeaders(auth.username, auth.password)
     };
 
     const response = await fetch(endpoint, {
@@ -96,11 +213,254 @@ async function executeSparqlConstruct(endpoint, query) {
     return await response.text();
 }
 
+// Import data to triplestore
+async function importData(config, graphUri, triples) {
+    const { dataEndpoint, username, password } = buildEndpoints(config);
+    const type = config.type || 'fuseki';
+
+    let url, contentType = 'application/n-triples';
+
+    switch (type) {
+        case 'stardog':
+            url = `${dataEndpoint}?graph=${encodeURIComponent(graphUri)}`;
+            break;
+        case 'graphdb':
+            url = `${dataEndpoint}?context=${encodeURIComponent('<' + graphUri + '>')}`;
+            break;
+        case 'fuseki':
+        default:
+            url = `${dataEndpoint}?graph=${encodeURIComponent(graphUri)}`;
+            break;
+    }
+
+    const headers = {
+        'Content-Type': contentType,
+        ...buildAuthHeaders(username, password)
+    };
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: headers,
+        body: triples
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Import failed: ${response.status} - ${text}`);
+    }
+
+    return { success: true };
+}
+
+// =============================================================================
+// TRIPLESTORE CONNECTION MANAGEMENT
+// =============================================================================
+
+/**
+ * Check triplestore connection based on type
+ */
+async function checkTriplestoreConnection(config) {
+    const { type, mode, baseUrl, dataset, database, repository, username, password } = config;
+    const defaults = TRIPLESTORE_DEFAULTS[type]?.[mode] || TRIPLESTORE_DEFAULTS.fuseki.local;
+    const base = baseUrl || defaults.baseUrl;
+    const authHeaders = buildAuthHeaders(username, password);
+
+    let checkUrl, checkPath, checkMethod = 'GET';
+    let availableDatasets = [];
+
+    switch (type) {
+        case 'stardog':
+            // Stardog: GET /admin/databases
+            checkUrl = `${base}/admin/databases`;
+            try {
+                const response = await fetch(checkUrl, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', ...authHeaders }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    availableDatasets = data.databases || [];
+                    return { connected: true, type: 'stardog', mode, baseUrl: base, databases: availableDatasets };
+                }
+            } catch (err) {
+                // Continue to return not connected
+            }
+            break;
+
+        case 'graphdb':
+            // GraphDB: GET /rest/repositories
+            checkUrl = `${base}/rest/repositories`;
+            try {
+                const response = await fetch(checkUrl, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', ...authHeaders }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    availableDatasets = data.map(r => r.id);
+                    return { connected: true, type: 'graphdb', mode, baseUrl: base, repositories: availableDatasets };
+                }
+            } catch (err) {
+                // Continue to return not connected
+            }
+            break;
+
+        case 'fuseki':
+        default:
+            // Fuseki: GET /$/datasets
+            checkUrl = `${base}/$/datasets`;
+            try {
+                const response = await fetch(checkUrl, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', ...authHeaders }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    availableDatasets = data.datasets || [];
+                    return { connected: true, type: 'fuseki', mode, baseUrl: base, datasets: availableDatasets };
+                }
+            } catch (err) {
+                // Continue to return not connected
+            }
+            break;
+    }
+
+    return { connected: false, type, mode, baseUrl: base, error: 'Could not connect to triplestore' };
+}
+
+// =============================================================================
+// EXPORT/IMPORT WITH METADATA
+// =============================================================================
+
+/**
+ * Create a downloadable export package with metadata
+ */
+function createExportPackage(triples, metadata) {
+    // Create a JSON wrapper that includes all restore metadata
+    const exportPackage = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        format: 'n-triples',
+        metadata: {
+            cubeUri: metadata.cubeUri,
+            graphUri: metadata.graphUri,
+            sourceEndpoint: metadata.endpoint,
+            sourceDataset: metadata.dataset,
+            sourceType: metadata.triplestoreType || 'fuseki',
+            tripleCount: metadata.tripleCount,
+            cubeName: metadata.cubeName || metadata.cubeUri.split('/').slice(-2).join('/'),
+            description: metadata.description || 'Exported cube data'
+        },
+        data: triples
+    };
+    return exportPackage;
+}
+
+/**
+ * Parse an import package to extract metadata and triples
+ */
+function parseImportPackage(content) {
+    try {
+        // Try to parse as JSON export package
+        const pkg = JSON.parse(content);
+        if (pkg.version && pkg.metadata && pkg.data) {
+            return {
+                isPackage: true,
+                metadata: pkg.metadata,
+                triples: pkg.data,
+                format: pkg.format || 'n-triples'
+            };
+        }
+    } catch (e) {
+        // Not JSON, treat as raw N-Triples
+    }
+
+    // Fallback: raw N-Triples content
+    return {
+        isPackage: false,
+        metadata: null,
+        triples: content,
+        format: 'n-triples'
+    };
+}
+
 // API Routes
 
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// =============================================================================
+// MULTI-TRIPLESTORE API ENDPOINTS
+// =============================================================================
+
+// Check any triplestore connection
+app.post('/api/triplestore/check', async (req, res) => {
+    try {
+        const config = req.body;
+        const result = await checkTriplestoreConnection(config);
+        res.json(result);
+    } catch (error) {
+        res.json({ connected: false, error: error.message });
+    }
+});
+
+// Get triplestore defaults
+app.get('/api/triplestore/defaults', (req, res) => {
+    res.json(TRIPLESTORE_DEFAULTS);
+});
+
+// Execute SPARQL query on any triplestore
+app.post('/api/triplestore/query', async (req, res) => {
+    try {
+        const { type, mode, baseUrl, dataset, database, repository, username, password, query, queryType } = req.body;
+
+        const config = { type, mode, baseUrl, dataset, database, repository, username, password };
+        const endpoints = buildEndpoints(config);
+        const auth = { username, password };
+
+        const startTime = Date.now();
+
+        if (queryType === 'update') {
+            await executeSparqlUpdate(endpoints.updateEndpoint, query, auth);
+            const duration = Date.now() - startTime;
+            res.json({ success: true, queryType: 'update', message: 'Update executed successfully', duration });
+        } else if (queryType === 'construct') {
+            const triples = await executeSparqlConstruct(endpoints.queryEndpoint, query, auth);
+            const tripleCount = triples.split('\n').filter(line => line.trim()).length;
+            const duration = Date.now() - startTime;
+            res.json({ success: true, queryType: 'construct', triples, tripleCount, duration });
+        } else {
+            const result = await executeSparqlSelect(endpoints.queryEndpoint, query, auth);
+            const duration = Date.now() - startTime;
+            res.json({
+                success: true,
+                queryType: 'select',
+                results: result.results,
+                head: result.head,
+                duration,
+                rowCount: result.results.bindings.length
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Import data to any triplestore
+app.post('/api/triplestore/import', async (req, res) => {
+    try {
+        const { type, mode, baseUrl, dataset, database, repository, username, password, graphUri, triples } = req.body;
+
+        const config = { type, mode, baseUrl, dataset, database, repository, username, password };
+        await importData(config, graphUri, triples);
+
+        const tripleCount = triples.split('\n').filter(line => line.trim()).length;
+        res.json({ success: true, tripleCount });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // Check Fuseki connection
@@ -1132,6 +1492,176 @@ app.post('/api/backup/restore', async (req, res) => {
             restoredTriples: metadata.tripleCount,
             cubeUri: metadata.cubeUri,
             graphUri: metadata.graphUri
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Export backup as downloadable file with full metadata
+app.get('/api/backup/:backupId/export', (req, res) => {
+    try {
+        const { backupId } = req.params;
+        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
+        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+
+        if (!fs.existsSync(metaFilePath) || !fs.existsSync(ntFilePath)) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+
+        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+        const triples = fs.readFileSync(ntFilePath, 'utf8');
+
+        // Create export package with all metadata for effortless restore
+        const exportPackage = createExportPackage(triples, metadata);
+
+        // Set headers for file download
+        const filename = `${backupId}_export.lindas.json`;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.json(exportPackage);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Upload and import backup file
+app.post('/api/backup/upload', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const content = fs.readFileSync(req.file.path, 'utf8');
+        const parsed = parseImportPackage(content);
+
+        // Clean up uploaded file
+        fs.unlinkSync(req.file.path);
+
+        // Return parsed content and metadata for user to review before import
+        res.json({
+            success: true,
+            isPackage: parsed.isPackage,
+            metadata: parsed.metadata,
+            tripleCount: parsed.triples.split('\n').filter(line => line.trim()).length,
+            format: parsed.format,
+            // Store triples temporarily for the actual import step
+            tempId: Date.now().toString()
+        });
+
+        // Store in temp storage for import step
+        const tempPath = path.join(EXPORT_DIR, `temp_${Date.now()}.json`);
+        fs.writeFileSync(tempPath, JSON.stringify(parsed));
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Import uploaded file to triplestore
+app.post('/api/backup/import', async (req, res) => {
+    try {
+        const {
+            tempId,
+            type, mode, baseUrl, dataset, database, repository, username, password,
+            graphUri,
+            overrideGraph
+        } = req.body;
+
+        // Find temp file
+        const tempFiles = fs.readdirSync(EXPORT_DIR).filter(f => f.startsWith('temp_'));
+        let parsed = null;
+        let tempPath = null;
+
+        for (const file of tempFiles) {
+            const filePath = path.join(EXPORT_DIR, file);
+            try {
+                const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                // Use the most recent temp file or match by tempId
+                if (!parsed || file.includes(tempId)) {
+                    parsed = content;
+                    tempPath = filePath;
+                }
+            } catch (e) {
+                // Skip invalid files
+            }
+        }
+
+        if (!parsed) {
+            return res.status(400).json({ error: 'No uploaded file found. Please upload a file first.' });
+        }
+
+        // Determine target graph
+        const targetGraph = overrideGraph || graphUri || (parsed.metadata?.graphUri);
+        if (!targetGraph) {
+            return res.status(400).json({ error: 'No target graph specified' });
+        }
+
+        // Import to triplestore
+        const config = { type: type || 'fuseki', mode: mode || 'local', baseUrl, dataset, database, repository, username, password };
+        await importData(config, targetGraph, parsed.triples);
+
+        // Clean up temp file
+        if (tempPath && fs.existsSync(tempPath)) {
+            fs.unlinkSync(tempPath);
+        }
+
+        // Also clean up old temp files (older than 1 hour)
+        const maxAge = 60 * 60 * 1000;
+        const now = Date.now();
+        for (const file of tempFiles) {
+            const filePath = path.join(EXPORT_DIR, file);
+            try {
+                const stats = fs.statSync(filePath);
+                if (now - stats.mtimeMs > maxAge) {
+                    fs.unlinkSync(filePath);
+                }
+            } catch (e) {
+                // Skip errors
+            }
+        }
+
+        res.json({
+            success: true,
+            importedTriples: parsed.triples.split('\n').filter(line => line.trim()).length,
+            graphUri: targetGraph,
+            metadata: parsed.metadata
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Restore backup to any triplestore (multi-triplestore aware)
+app.post('/api/backup/restore-to', async (req, res) => {
+    try {
+        const {
+            backupId,
+            type, mode, baseUrl, dataset, database, repository, username, password,
+            graphUri
+        } = req.body;
+
+        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
+        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+
+        if (!fs.existsSync(metaFilePath) || !fs.existsSync(ntFilePath)) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+
+        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+        const triples = fs.readFileSync(ntFilePath, 'utf8');
+
+        // Use provided graph or original
+        const targetGraph = graphUri || metadata.graphUri;
+
+        // Import to specified triplestore
+        const config = { type: type || 'fuseki', mode: mode || 'local', baseUrl, dataset, database, repository, username, password };
+        await importData(config, targetGraph, triples);
+
+        res.json({
+            success: true,
+            restoredTriples: metadata.tripleCount,
+            cubeUri: metadata.cubeUri,
+            graphUri: targetGraph
         });
     } catch (error) {
         res.status(500).json({ error: error.message });

@@ -1,10 +1,34 @@
 // LINDAS Cube Cleanup Demo Application
 
+// Triplestore defaults
+const TRIPLESTORE_DEFAULTS = {
+    fuseki: {
+        local: { baseUrl: 'http://localhost:3030', hint: 'For local Fuseki, use http://localhost:3030' },
+        cloud: { baseUrl: 'https://lindas.admin.ch', hint: 'For LINDAS, use https://lindas.admin.ch' }
+    },
+    stardog: {
+        local: { baseUrl: 'http://localhost:5820', hint: 'For local Stardog, use http://localhost:5820' },
+        cloud: { baseUrl: 'https://sd-xxxxx.stardog.cloud:5820', hint: 'Enter your Stardog Cloud instance URL' }
+    },
+    graphdb: {
+        local: { baseUrl: 'http://localhost:7200', hint: 'For local GraphDB, use http://localhost:7200' },
+        cloud: { baseUrl: 'https://your-instance.graphdb.cloud', hint: 'Enter your GraphDB Cloud instance URL' }
+    }
+};
+
 // State management
 const state = {
+    // Triplestore configuration
+    triplestoreType: 'fuseki',
+    triplestoreMode: 'local',
     fusekiEndpoint: 'http://localhost:3030',
     fusekiDataset: 'lindas',
+    stardogDatabase: 'mydb',
+    graphdbRepository: 'test',
+    authUsername: '',
+    authPassword: '',
     connected: false,
+    // Graph configuration
     lindasGraph: 'https://lindas.admin.ch/sfoe/cube',
     localGraph: 'https://lindas.admin.ch/sfoe/cube',
     availableCubes: [],
@@ -20,26 +44,132 @@ const state = {
     },
     // Backup management
     selectedBackupId: null,
-    backups: []
+    backups: [],
+    // Import state
+    uploadedFileData: null
 };
 
 // DOM Elements
 const elements = {
+    // Triplestore config
+    triplestoreType: document.getElementById('triplestore-type'),
+    triplestoreMode: document.getElementById('triplestore-mode'),
     fusekiEndpoint: document.getElementById('fuseki-endpoint'),
     fusekiDataset: document.getElementById('fuseki-dataset'),
+    stardogDatabase: document.getElementById('stardog-database'),
+    graphdbRepository: document.getElementById('graphdb-repository'),
+    authUsername: document.getElementById('auth-username'),
+    authPassword: document.getElementById('auth-password'),
+    endpointHint: document.getElementById('endpoint-hint'),
+    // UI elements
     fusekiStatus: document.getElementById('fuseki-status'),
     fusekiInfo: document.getElementById('fuseki-info'),
+    modeIndicator: document.getElementById('mode-indicator'),
+    cloudWarningBanner: document.getElementById('cloud-warning-banner'),
+    // Graph inputs
     lindasGraph: document.getElementById('lindas-graph'),
     localGraph: document.getElementById('local-graph'),
-    cleanupGraph: document.getElementById('cleanup-graph')
+    cleanupGraph: document.getElementById('cleanup-graph'),
+    // Dataset rows
+    fusekiDatasetRow: document.getElementById('fuseki-dataset-row'),
+    stardogDatabaseRow: document.getElementById('stardog-database-row'),
+    graphdbRepositoryRow: document.getElementById('graphdb-repository-row'),
+    authRow: document.getElementById('auth-row')
 };
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     initEventListeners();
+    initTriplestoreConfig();
     checkFusekiConnection();
 });
+
+// Initialize triplestore configuration UI
+function initTriplestoreConfig() {
+    updateTriplestoreUI();
+}
+
+// Update UI based on triplestore type and mode
+function updateTriplestoreUI() {
+    const type = elements.triplestoreType?.value || 'fuseki';
+    const mode = elements.triplestoreMode?.value || 'local';
+
+    state.triplestoreType = type;
+    state.triplestoreMode = mode;
+
+    // Update endpoint hint and default value
+    const defaults = TRIPLESTORE_DEFAULTS[type]?.[mode];
+    if (defaults) {
+        if (elements.endpointHint) {
+            elements.endpointHint.textContent = defaults.hint;
+        }
+        // Only update if currently empty or using a default
+        const currentEndpoint = elements.fusekiEndpoint?.value || '';
+        const isDefaultUrl = Object.values(TRIPLESTORE_DEFAULTS).some(ts =>
+            Object.values(ts).some(m => m.baseUrl === currentEndpoint)
+        );
+        if (!currentEndpoint || isDefaultUrl) {
+            if (elements.fusekiEndpoint) {
+                elements.fusekiEndpoint.value = defaults.baseUrl;
+            }
+        }
+    }
+
+    // Show/hide dataset/database/repository inputs
+    if (elements.fusekiDatasetRow) {
+        elements.fusekiDatasetRow.classList.toggle('hidden', type !== 'fuseki');
+    }
+    if (elements.stardogDatabaseRow) {
+        elements.stardogDatabaseRow.classList.toggle('hidden', type !== 'stardog');
+    }
+    if (elements.graphdbRepositoryRow) {
+        elements.graphdbRepositoryRow.classList.toggle('hidden', type !== 'graphdb');
+    }
+
+    // Show/hide auth row for non-fuseki local or any cloud
+    const needsAuth = (type !== 'fuseki' && mode === 'local') || mode === 'cloud';
+    if (elements.authRow) {
+        elements.authRow.classList.toggle('hidden', !needsAuth);
+    }
+
+    // Update mode indicator in header
+    if (elements.modeIndicator) {
+        elements.modeIndicator.className = 'mode-indicator ' + mode;
+        const badge = elements.modeIndicator.querySelector('.mode-badge');
+        if (badge) {
+            badge.textContent = mode.toUpperCase();
+        }
+    }
+
+    // Show/hide cloud warning banner
+    if (elements.cloudWarningBanner) {
+        elements.cloudWarningBanner.classList.toggle('hidden', mode !== 'cloud');
+    }
+
+    // Update status indicator text
+    if (elements.fusekiStatus) {
+        const typeNames = { fuseki: 'Fuseki', stardog: 'Stardog', graphdb: 'GraphDB' };
+        const statusText = elements.fusekiStatus.querySelector('.status-text');
+        if (statusText) {
+            statusText.textContent = `${typeNames[type]}: ${state.connected ? 'Connected' : 'Disconnected'}`;
+        }
+    }
+}
+
+// Get current triplestore config
+function getTriplestoreConfig() {
+    return {
+        type: state.triplestoreType,
+        mode: state.triplestoreMode,
+        baseUrl: elements.fusekiEndpoint?.value || 'http://localhost:3030',
+        dataset: elements.fusekiDataset?.value || 'lindas',
+        database: elements.stardogDatabase?.value || 'mydb',
+        repository: elements.graphdbRepository?.value || 'test',
+        username: elements.authUsername?.value || '',
+        password: elements.authPassword?.value || ''
+    };
+}
 
 // Tab navigation
 function initTabs() {
@@ -72,6 +202,33 @@ function syncGraphInputs() {
 
 // Event listeners
 function initEventListeners() {
+    // Triplestore configuration
+    if (elements.triplestoreType) {
+        elements.triplestoreType.addEventListener('change', () => {
+            updateTriplestoreUI();
+            state.connected = false;
+            updateConnectionStatus(false);
+        });
+    }
+    if (elements.triplestoreMode) {
+        elements.triplestoreMode.addEventListener('change', () => {
+            updateTriplestoreUI();
+            state.connected = false;
+            updateConnectionStatus(false);
+        });
+    }
+
+    // Cloud warning banner - switch to local button
+    const switchToLocalBtn = document.getElementById('btn-switch-to-local');
+    if (switchToLocalBtn) {
+        switchToLocalBtn.addEventListener('click', () => {
+            if (elements.triplestoreMode) {
+                elements.triplestoreMode.value = 'local';
+                updateTriplestoreUI();
+            }
+        });
+    }
+
     // Setup tab
     document.getElementById('btn-check-fuseki').addEventListener('click', checkFusekiConnection);
     document.getElementById('btn-create-dataset').addEventListener('click', createDataset);
@@ -100,6 +257,50 @@ function initEventListeners() {
     document.getElementById('btn-restore-backup').addEventListener('click', restoreBackup);
     document.getElementById('btn-delete-backup').addEventListener('click', deleteBackup);
 
+    // Export backup button
+    const exportBackupBtn = document.getElementById('btn-export-backup');
+    if (exportBackupBtn) {
+        exportBackupBtn.addEventListener('click', exportBackup);
+    }
+
+    // File upload functionality
+    const fileInput = document.getElementById('backup-file-input');
+    const selectFileBtn = document.getElementById('btn-select-file');
+    const uploadArea = document.getElementById('upload-area');
+    const importFileBtn = document.getElementById('btn-import-file');
+    const cancelImportBtn = document.getElementById('btn-cancel-import');
+
+    if (selectFileBtn && fileInput) {
+        selectFileBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileSelect);
+    }
+
+    if (uploadArea) {
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileUpload(files[0]);
+            }
+        });
+    }
+
+    if (importFileBtn) {
+        importFileBtn.addEventListener('click', importUploadedFile);
+    }
+
+    if (cancelImportBtn) {
+        cancelImportBtn.addEventListener('click', cancelFileImport);
+    }
+
     // Query Editor tab
     document.getElementById('btn-load-template').addEventListener('click', loadQueryTemplate);
     document.getElementById('btn-execute-query').addEventListener('click', executeQuery);
@@ -118,6 +319,171 @@ function initEventListeners() {
     elements.fusekiDataset.addEventListener('change', () => {
         state.fusekiDataset = elements.fusekiDataset.value;
     });
+}
+
+// Update connection status indicator
+function updateConnectionStatus(connected) {
+    state.connected = connected;
+    const statusEl = elements.fusekiStatus;
+    if (statusEl) {
+        statusEl.classList.toggle('connected', connected);
+        statusEl.classList.toggle('disconnected', !connected);
+        const typeNames = { fuseki: 'Fuseki', stardog: 'Stardog', graphdb: 'GraphDB' };
+        const statusText = statusEl.querySelector('.status-text');
+        if (statusText) {
+            statusText.textContent = typeNames[state.triplestoreType] + ': ' + (connected ? 'Connected' : 'Disconnected');
+        }
+    }
+}
+
+// Export backup as downloadable file
+async function exportBackup() {
+    if (!state.selectedBackupId) {
+        alert('Please select a backup first');
+        return;
+    }
+
+    try {
+        // Trigger download by opening the export URL
+        window.location.href = '/api/backup/' + state.selectedBackupId + '/export';
+    } catch (error) {
+        alert('Export failed: ' + error.message);
+    }
+}
+
+// Handle file selection from input
+function handleFileSelect(event) {
+    const files = event.target.files;
+    if (files.length > 0) {
+        handleFileUpload(files[0]);
+    }
+}
+
+// Handle file upload
+async function handleFileUpload(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('/api/backup/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.error || 'Upload failed');
+        }
+
+        // Store the uploaded data for import
+        state.uploadedFileData = result;
+
+        // Show preview
+        showUploadPreview(result, file.name);
+
+    } catch (error) {
+        alert('File upload failed: ' + error.message);
+    }
+}
+
+// Create a preview row element safely (no innerHTML)
+function createPreviewRow(label, value) {
+    const row = document.createElement('div');
+    row.className = 'preview-row';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'preview-label';
+    labelSpan.textContent = label;
+
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'preview-value';
+    valueSpan.textContent = value;
+
+    row.appendChild(labelSpan);
+    row.appendChild(valueSpan);
+    return row;
+}
+
+// Show upload preview (using safe DOM methods)
+function showUploadPreview(data, filename) {
+    const previewEl = document.getElementById('upload-preview');
+    const previewInfo = document.getElementById('upload-preview-info');
+
+    if (!previewEl || !previewInfo) return;
+
+    // Clear existing content
+    previewInfo.textContent = '';
+
+    // Create preview rows safely
+    previewInfo.appendChild(createPreviewRow('File:', filename));
+    previewInfo.appendChild(createPreviewRow('Triple Count:', data.tripleCount.toLocaleString()));
+    previewInfo.appendChild(createPreviewRow('Format:', data.format));
+
+    if (data.isPackage && data.metadata) {
+        previewInfo.appendChild(createPreviewRow('Source Graph:', data.metadata.graphUri || 'Not specified'));
+        previewInfo.appendChild(createPreviewRow('Source Cube:', data.metadata.cubeUri || 'Not specified'));
+        previewInfo.appendChild(createPreviewRow('Source Type:', data.metadata.sourceType || 'Unknown'));
+
+        // Pre-fill target graph
+        const targetGraphInput = document.getElementById('import-target-graph');
+        if (targetGraphInput && data.metadata.graphUri) {
+            targetGraphInput.placeholder = 'Use: ' + data.metadata.graphUri;
+        }
+    } else {
+        previewInfo.appendChild(createPreviewRow('Package Type:', 'Raw N-Triples (no metadata)'));
+    }
+
+    previewEl.classList.remove('hidden');
+}
+
+// Import the uploaded file to triplestore
+async function importUploadedFile() {
+    if (!state.uploadedFileData) {
+        alert('No file uploaded');
+        return;
+    }
+
+    const config = getTriplestoreConfig();
+    const targetGraphInput = document.getElementById('import-target-graph');
+    const targetGraph = targetGraphInput ? targetGraphInput.value : '';
+
+    try {
+        const result = await api('/backup/import', {
+            tempId: state.uploadedFileData.tempId,
+            type: config.type,
+            mode: config.mode,
+            baseUrl: config.baseUrl,
+            dataset: config.dataset,
+            database: config.database,
+            repository: config.repository,
+            username: config.username,
+            password: config.password,
+            graphUri: state.uploadedFileData.metadata ? state.uploadedFileData.metadata.graphUri : null,
+            overrideGraph: targetGraph || null
+        });
+
+        alert('Import successful! Imported ' + result.importedTriples.toLocaleString() + ' triples to ' + result.graphUri);
+
+        // Clear upload state
+        cancelFileImport();
+
+    } catch (error) {
+        alert('Import failed: ' + error.message);
+    }
+}
+
+// Cancel file import
+function cancelFileImport() {
+    state.uploadedFileData = null;
+    const previewEl = document.getElementById('upload-preview');
+    if (previewEl) {
+        previewEl.classList.add('hidden');
+    }
+    const fileInput = document.getElementById('backup-file-input');
+    if (fileInput) {
+        fileInput.value = '';
+    }
 }
 
 // API helper
@@ -139,39 +505,59 @@ async function api(endpoint, data = {}) {
     }
 }
 
-// Check Fuseki connection
+// Check Fuseki connection (multi-triplestore aware)
 async function checkFusekiConnection() {
-    const statusEl = elements.fusekiStatus;
     const infoEl = elements.fusekiInfo;
+    const config = getTriplestoreConfig();
+    const typeNames = { fuseki: 'Fuseki', stardog: 'Stardog', graphdb: 'GraphDB' };
+    const typeName = typeNames[config.type] || 'Triplestore';
 
     try {
-        const result = await api('/fuseki/check', {
-            endpoint: elements.fusekiEndpoint.value
-        });
+        // Use the multi-triplestore check endpoint
+        const result = await api('/triplestore/check', config);
 
         if (result.connected) {
-            state.connected = true;
-            statusEl.classList.remove('disconnected');
-            statusEl.classList.add('connected');
-            statusEl.querySelector('.status-text').textContent = 'Fuseki: Connected';
+            updateConnectionStatus(true);
 
             infoEl.classList.remove('hidden', 'error');
             infoEl.classList.add('success');
 
-            const datasets = result.datasets.map(d => d['ds.name']).join(', ') || 'None';
-            infoEl.innerHTML = `<strong>Connected!</strong><br>Datasets: ${datasets}`;
+            // Build datasets list based on triplestore type
+            let datasetsList = 'None';
+            if (result.datasets) {
+                datasetsList = result.datasets.map(d => d['ds.name'] || d).join(', ') || 'None';
+            } else if (result.databases) {
+                datasetsList = result.databases.join(', ') || 'None';
+            } else if (result.repositories) {
+                datasetsList = result.repositories.join(', ') || 'None';
+            }
+
+            // Use safe DOM methods
+            infoEl.textContent = '';
+            const strongEl = document.createElement('strong');
+            strongEl.textContent = 'Connected to ' + typeName + '!';
+            infoEl.appendChild(strongEl);
+            infoEl.appendChild(document.createElement('br'));
+            const typeLabel = config.type === 'stardog' ? 'Databases' : (config.type === 'graphdb' ? 'Repositories' : 'Datasets');
+            infoEl.appendChild(document.createTextNode(typeLabel + ': ' + datasetsList));
         } else {
-            throw new Error(result.error);
+            throw new Error(result.error || 'Connection failed');
         }
     } catch (error) {
-        state.connected = false;
-        statusEl.classList.remove('connected');
-        statusEl.classList.add('disconnected');
-        statusEl.querySelector('.status-text').textContent = 'Fuseki: Disconnected';
+        updateConnectionStatus(false);
 
         infoEl.classList.remove('hidden', 'success');
         infoEl.classList.add('error');
-        infoEl.innerHTML = `<strong>Connection failed:</strong> ${error.message}<br><br>Make sure Fuseki is running on the specified endpoint.`;
+
+        // Use safe DOM methods
+        infoEl.textContent = '';
+        const strongEl = document.createElement('strong');
+        strongEl.textContent = 'Connection failed:';
+        infoEl.appendChild(strongEl);
+        infoEl.appendChild(document.createTextNode(' ' + error.message));
+        infoEl.appendChild(document.createElement('br'));
+        infoEl.appendChild(document.createElement('br'));
+        infoEl.appendChild(document.createTextNode('Make sure ' + typeName + ' is running on the specified endpoint.'));
     }
 }
 
@@ -185,13 +571,21 @@ async function createDataset() {
 
         elements.fusekiInfo.classList.remove('hidden', 'error');
         elements.fusekiInfo.classList.add('success');
-        elements.fusekiInfo.innerHTML = `<strong>Dataset created:</strong> ${result.dataset}`;
+        elements.fusekiInfo.textContent = '';
+        const strongEl = document.createElement('strong');
+        strongEl.textContent = 'Dataset created:';
+        elements.fusekiInfo.appendChild(strongEl);
+        elements.fusekiInfo.appendChild(document.createTextNode(' ' + result.dataset));
 
         await checkFusekiConnection();
     } catch (error) {
         elements.fusekiInfo.classList.remove('hidden', 'success');
         elements.fusekiInfo.classList.add('error');
-        elements.fusekiInfo.innerHTML = `<strong>Error:</strong> ${error.message}`;
+        elements.fusekiInfo.textContent = '';
+        const strongEl = document.createElement('strong');
+        strongEl.textContent = 'Error:';
+        elements.fusekiInfo.appendChild(strongEl);
+        elements.fusekiInfo.appendChild(document.createTextNode(' ' + error.message));
     }
 }
 
