@@ -36,14 +36,32 @@
     <main>
         <!-- Setup Tab -->
         <section id="setup" class="tab-content active">
-            <!-- Cloud Mode Warning Banner -->
-            <div id="cloud-warning-banner" class="warning-banner hidden">
-                <div class="warning-icon">&#9888;</div>
+            <!-- Cloud Mode Warning Banner - More Prominent -->
+            <div id="cloud-warning-banner" class="warning-banner cloud-danger hidden">
+                <div class="warning-icon-large">&#9888;</div>
                 <div class="warning-content">
-                    <strong>Cloud Mode Active</strong>
-                    <p>You are connected to a cloud/production triplestore. All changes will affect live data. Proceed with caution.</p>
+                    <strong class="warning-title">PRODUCTION MODE - CAUTION!</strong>
+                    <p class="warning-message">You are connected to a <span class="highlight-danger">cloud/production</span> triplestore.</p>
+                    <p class="warning-detail">All changes, deletions, and imports will affect <strong>LIVE DATA</strong>.</p>
+                    <ul class="warning-list">
+                        <li>Deleted data may be <strong>unrecoverable</strong> without backups</li>
+                        <li>Changes are <strong>immediate</strong> and affect all users</li>
+                        <li>Always create backups before deleting data</li>
+                    </ul>
                 </div>
-                <button id="btn-switch-to-local" class="btn btn-small btn-warning">Switch to Local</button>
+                <div class="warning-actions">
+                    <button id="btn-switch-to-local" class="btn btn-primary">Switch to Local Mode</button>
+                    <button id="btn-acknowledge-cloud" class="btn btn-danger-outline">I Understand the Risks</button>
+                </div>
+            </div>
+
+            <!-- Local Mode Info Banner -->
+            <div id="local-mode-banner" class="info-banner local-safe">
+                <div class="info-icon">&#10003;</div>
+                <div class="info-content">
+                    <strong>Local Development Mode</strong>
+                    <p>You are working with a local triplestore. Changes only affect your local data - safe for testing and development.</p>
+                </div>
             </div>
 
             <div class="card">
@@ -112,6 +130,113 @@
                 </div>
 
                 <div id="fuseki-info" class="info-box hidden"></div>
+            </div>
+
+            <!-- Local Setup Guide Card -->
+            <div class="card" id="local-setup-guide">
+                <h2>Local Triplestore Setup Guide</h2>
+                <p class="description">Quick setup instructions for running a local triplestore instance.</p>
+
+                <div class="setup-tabs">
+                    <button class="setup-tab-btn active" data-setup="fuseki">Apache Fuseki</button>
+                    <button class="setup-tab-btn" data-setup="stardog">Stardog Free</button>
+                    <button class="setup-tab-btn" data-setup="graphdb">GraphDB Free</button>
+                </div>
+
+                <div class="setup-content" id="setup-fuseki">
+                    <h3>Apache Fuseki (Recommended for Testing)</h3>
+                    <p><strong>Free, open-source, easy to set up</strong></p>
+
+                    <div class="setup-option">
+                        <h4>Option 1: Download and Run</h4>
+                        <ol>
+                            <li>Download from <a href="https://jena.apache.org/download/" target="_blank">Apache Jena Downloads</a></li>
+                            <li>Extract the archive</li>
+                            <li>Run: <code>fuseki-server --mem /lindas</code></li>
+                            <li>Access at <code>http://localhost:3030</code></li>
+                        </ol>
+                    </div>
+
+                    <div class="setup-option">
+                        <h4>Option 2: Docker</h4>
+                        <pre class="code-block">docker run -d --name fuseki -p 3030:3030 \
+  -e ADMIN_PASSWORD=admin \
+  stain/jena-fuseki</pre>
+                    </div>
+
+                    <div class="setup-info">
+                        <strong>Default Settings:</strong> Endpoint: <code>http://localhost:3030</code>, Dataset: <code>lindas</code>
+                    </div>
+                </div>
+
+                <div class="setup-content hidden" id="setup-stardog">
+                    <h3>Stardog Free Edition</h3>
+                    <p><strong>Free for up to 25 databases, 10GB data</strong></p>
+
+                    <div class="setup-option">
+                        <h4>Option 1: Download and Install</h4>
+                        <ol>
+                            <li>Register and download from <a href="https://www.stardog.com/get-started/" target="_blank">Stardog Get Started</a></li>
+                            <li>Follow the installation guide for your OS</li>
+                            <li>Start server: <code>stardog-admin server start</code></li>
+                            <li>Create database: <code>stardog-admin db create -n mydb</code></li>
+                        </ol>
+                    </div>
+
+                    <div class="setup-option">
+                        <h4>Option 2: Docker</h4>
+                        <pre class="code-block">docker run -d --name stardog -p 5820:5820 \
+  -v stardog-data:/var/opt/stardog \
+  stardog/stardog:latest</pre>
+                    </div>
+
+                    <div class="setup-info">
+                        <strong>Default Settings:</strong> Endpoint: <code>http://localhost:5820</code>, User: <code>admin</code>, Password: <code>admin</code>
+                    </div>
+
+                    <div class="setup-limits">
+                        <strong>Free Edition Limits:</strong>
+                        <ul>
+                            <li>Max 25 databases</li>
+                            <li>Max 10GB data</li>
+                            <li>Max 1 hour query time</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="setup-content hidden" id="setup-graphdb">
+                    <h3>GraphDB Free Edition</h3>
+                    <p><strong>Free, unlimited data, 2 queries/second</strong></p>
+
+                    <div class="setup-option">
+                        <h4>Option 1: Download and Install</h4>
+                        <ol>
+                            <li>Download from <a href="https://graphdb.ontotext.com/documentation/free/" target="_blank">GraphDB Free</a></li>
+                            <li>Run the installer</li>
+                            <li>Access at <code>http://localhost:7200</code></li>
+                            <li>Create a repository via the web interface</li>
+                        </ol>
+                    </div>
+
+                    <div class="setup-option">
+                        <h4>Option 2: Docker</h4>
+                        <pre class="code-block">docker run -d --name graphdb -p 7200:7200 \
+  ontotext/graphdb:free</pre>
+                    </div>
+
+                    <div class="setup-info">
+                        <strong>Default Settings:</strong> Endpoint: <code>http://localhost:7200</code>, Repository: <code>test</code>
+                    </div>
+
+                    <div class="setup-limits">
+                        <strong>Free Edition Limits:</strong>
+                        <ul>
+                            <li>Max 2 queries/second</li>
+                            <li>Max 1 concurrent query</li>
+                            <li>No cluster support</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
 
             <div class="card">

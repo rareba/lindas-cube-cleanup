@@ -39,13 +39,18 @@ const TRIPLESTORE_DEFAULTS = {
             queryPath: '/{dataset}/query',
             updatePath: '/{dataset}/update',
             dataPath: '/{dataset}/data',
-            datasetsPath: '/$/datasets'
+            datasetsPath: '/$/datasets',
+            description: 'Apache Fuseki - Local Development',
+            setupInstructions: 'Download from https://jena.apache.org/download/ and run fuseki-server'
         },
         cloud: {
             baseUrl: 'https://lindas.admin.ch',
             queryPath: '/query',
             updatePath: '/update',
-            dataPath: '/data'
+            dataPath: '/data',
+            description: 'LINDAS Production - Swiss Government Linked Data',
+            isProduction: true,
+            warning: 'CAUTION: This is the production LINDAS endpoint. All changes affect live data!'
         }
     },
     stardog: {
@@ -54,13 +59,24 @@ const TRIPLESTORE_DEFAULTS = {
             queryPath: '/{database}/query',
             updatePath: '/{database}/update',
             dataPath: '/{database}',
-            defaultCredentials: { username: 'admin', password: 'admin' }
+            defaultCredentials: { username: 'admin', password: 'admin' },
+            description: 'Stardog Free - Local Development (up to 25 databases, 10GB data)',
+            setupInstructions: 'Download Stardog Free from https://www.stardog.com/get-started/',
+            dockerCommand: 'docker run -d --name stardog -p 5820:5820 -v stardog-data:/var/opt/stardog stardog/stardog:latest',
+            freeEditionLimits: {
+                maxDatabases: 25,
+                maxDataSize: '10GB',
+                maxQueryTime: '1 hour'
+            }
         },
         cloud: {
-            baseUrl: 'https://sd-xxxxxx.stardog.cloud:5820',
+            baseUrl: 'https://sd-xxxxx.stardog.cloud:5820',
             queryPath: '/{database}/query',
             updatePath: '/{database}/update',
-            dataPath: '/{database}'
+            dataPath: '/{database}',
+            description: 'Stardog Cloud - Production Environment',
+            isProduction: true,
+            warning: 'CAUTION: This is a cloud/production endpoint. All changes affect live data!'
         }
     },
     graphdb: {
@@ -69,16 +85,30 @@ const TRIPLESTORE_DEFAULTS = {
             queryPath: '/repositories/{repository}',
             updatePath: '/repositories/{repository}/statements',
             dataPath: '/repositories/{repository}/statements',
-            repositoriesPath: '/rest/repositories'
+            repositoriesPath: '/rest/repositories',
+            description: 'GraphDB Free - Local Development (unlimited data, 2 queries/second)',
+            setupInstructions: 'Download from https://graphdb.ontotext.com/documentation/free/',
+            dockerCommand: 'docker run -d --name graphdb -p 7200:7200 ontotext/graphdb:free',
+            freeEditionLimits: {
+                queriesPerSecond: 2,
+                concurrentQueries: 1
+            }
         },
         cloud: {
             baseUrl: 'https://your-instance.graphdb.cloud',
             queryPath: '/repositories/{repository}',
             updatePath: '/repositories/{repository}/statements',
-            dataPath: '/repositories/{repository}/statements'
+            dataPath: '/repositories/{repository}/statements',
+            description: 'GraphDB Cloud - Production Environment',
+            isProduction: true,
+            warning: 'CAUTION: This is a cloud/production endpoint. All changes affect live data!'
         }
     }
 };
+
+// Environment mode tracking
+let currentEnvironmentMode = 'local';
+let cloudModeWarningAcknowledged = false;
 
 const LINDAS_ENDPOINT = 'https://lindas.admin.ch/query';
 const DEFAULT_FUSEKI_ENDPOINT = 'http://localhost:3030';
@@ -333,40 +363,131 @@ async function checkTriplestoreConnection(config) {
 // =============================================================================
 
 /**
- * Create a downloadable export package with metadata
+ * Create a downloadable export package with complete metadata for effortless restore
+ * Version 2.0 format includes all necessary information to restore data to any triplestore
  */
 function createExportPackage(triples, metadata) {
-    // Create a JSON wrapper that includes all restore metadata
+    // Parse cube URI to extract structured information
+    const cubeUri = metadata.cubeUri || '';
+    const uriParts = cubeUri.split('/');
+    const versionMatch = cubeUri.match(/\/(\d+)\/?$/);
+    const version = versionMatch ? parseInt(versionMatch[1]) : null;
+    const baseCube = version !== null ? cubeUri.replace(/\/\d+\/?$/, '') : cubeUri;
+
+    // Create a comprehensive JSON wrapper with all restore metadata
     const exportPackage = {
-        version: '1.0',
+        // Package metadata
+        packageVersion: '2.0',
         exportedAt: new Date().toISOString(),
+        exportedBy: 'lindas-cube-cleanup',
         format: 'n-triples',
-        metadata: {
-            cubeUri: metadata.cubeUri,
-            graphUri: metadata.graphUri,
-            sourceEndpoint: metadata.endpoint,
-            sourceDataset: metadata.dataset,
-            sourceType: metadata.triplestoreType || 'fuseki',
-            tripleCount: metadata.tripleCount,
-            cubeName: metadata.cubeName || metadata.cubeUri.split('/').slice(-2).join('/'),
-            description: metadata.description || 'Exported cube data'
+
+        // Source information (where the data came from)
+        source: {
+            endpoint: metadata.endpoint,
+            dataset: metadata.dataset,
+            database: metadata.database,
+            repository: metadata.repository,
+            triplestoreType: metadata.triplestoreType || 'fuseki',
+            triplestoreMode: metadata.triplestoreMode || 'local'
         },
+
+        // Cube metadata for identification
+        cube: {
+            uri: cubeUri,
+            baseCube: baseCube,
+            version: version,
+            name: metadata.cubeName || uriParts.slice(-2).join('/'),
+            graphUri: metadata.graphUri
+        },
+
+        // Restore instructions
+        restore: {
+            targetGraph: metadata.graphUri,
+            recommendedDataset: metadata.dataset,
+            instructions: [
+                'This backup can be restored to any SPARQL-compliant triplestore',
+                'The data should be imported into the target graph specified above',
+                'For Fuseki: POST to /{dataset}/data?graph=<graphUri>',
+                'For Stardog: POST to /{database}?graph=<graphUri>',
+                'For GraphDB: POST to /repositories/{repo}/statements?context=<graphUri>'
+            ],
+            supportedTargets: ['fuseki', 'stardog', 'graphdb']
+        },
+
+        // Statistics
+        stats: {
+            tripleCount: metadata.tripleCount,
+            sizeBytes: triples ? Buffer.byteLength(triples, 'utf8') : 0,
+            backupId: metadata.backupId
+        },
+
+        // Deletion context (if this was a pre-deletion backup)
+        deletionContext: metadata.deletionContext || null,
+
+        // The actual data
         data: triples
     };
+
     return exportPackage;
 }
 
 /**
  * Parse an import package to extract metadata and triples
+ * Supports both v1.0 and v2.0 export formats
  */
 function parseImportPackage(content) {
     try {
         // Try to parse as JSON export package
         const pkg = JSON.parse(content);
+
+        // Check for v2.0 format (packageVersion field)
+        if (pkg.packageVersion === '2.0' && pkg.cube && pkg.data) {
+            return {
+                isPackage: true,
+                packageVersion: '2.0',
+                metadata: {
+                    cubeUri: pkg.cube.uri,
+                    baseCube: pkg.cube.baseCube,
+                    version: pkg.cube.version,
+                    cubeName: pkg.cube.name,
+                    graphUri: pkg.cube.graphUri,
+                    // Source information
+                    sourceEndpoint: pkg.source?.endpoint,
+                    sourceDataset: pkg.source?.dataset,
+                    sourceDatabase: pkg.source?.database,
+                    sourceRepository: pkg.source?.repository,
+                    sourceType: pkg.source?.triplestoreType,
+                    sourceMode: pkg.source?.triplestoreMode,
+                    // Stats
+                    tripleCount: pkg.stats?.tripleCount,
+                    sizeBytes: pkg.stats?.sizeBytes,
+                    backupId: pkg.stats?.backupId,
+                    // Export info
+                    exportedAt: pkg.exportedAt,
+                    exportedBy: pkg.exportedBy
+                },
+                restore: pkg.restore,
+                triples: pkg.data,
+                format: pkg.format || 'n-triples'
+            };
+        }
+
+        // Check for v1.0 format (version field with metadata object)
         if (pkg.version && pkg.metadata && pkg.data) {
             return {
                 isPackage: true,
-                metadata: pkg.metadata,
+                packageVersion: '1.0',
+                metadata: {
+                    cubeUri: pkg.metadata.cubeUri,
+                    graphUri: pkg.metadata.graphUri,
+                    sourceEndpoint: pkg.metadata.sourceEndpoint,
+                    sourceDataset: pkg.metadata.sourceDataset,
+                    sourceType: pkg.metadata.sourceType || 'fuseki',
+                    tripleCount: pkg.metadata.tripleCount,
+                    cubeName: pkg.metadata.cubeName,
+                    description: pkg.metadata.description
+                },
                 triples: pkg.data,
                 format: pkg.format || 'n-triples'
             };
@@ -378,6 +499,7 @@ function parseImportPackage(content) {
     // Fallback: raw N-Triples content
     return {
         isPackage: false,
+        packageVersion: null,
         metadata: null,
         triples: content,
         format: 'n-triples'
@@ -409,6 +531,90 @@ app.post('/api/triplestore/check', async (req, res) => {
 // Get triplestore defaults
 app.get('/api/triplestore/defaults', (req, res) => {
     res.json(TRIPLESTORE_DEFAULTS);
+});
+
+// Get environment information with setup instructions
+app.get('/api/environment/info', (req, res) => {
+    const { type, mode } = req.query;
+    const triplestoreType = type || 'fuseki';
+    const triplestoreMode = mode || 'local';
+
+    const config = TRIPLESTORE_DEFAULTS[triplestoreType]?.[triplestoreMode];
+
+    if (!config) {
+        return res.status(400).json({ error: 'Invalid triplestore type or mode' });
+    }
+
+    res.json({
+        type: triplestoreType,
+        mode: triplestoreMode,
+        isProduction: config.isProduction || false,
+        isCloud: triplestoreMode === 'cloud',
+        description: config.description || '',
+        setupInstructions: config.setupInstructions || '',
+        dockerCommand: config.dockerCommand || '',
+        warning: config.warning || '',
+        freeEditionLimits: config.freeEditionLimits || null,
+        defaultEndpoint: config.baseUrl
+    });
+});
+
+// Check if cloud mode requires warning acknowledgment
+app.post('/api/environment/check-mode', (req, res) => {
+    const { type, mode } = req.body;
+    const config = TRIPLESTORE_DEFAULTS[type]?.[mode];
+
+    if (!config) {
+        return res.status(400).json({ error: 'Invalid triplestore type or mode' });
+    }
+
+    const isProduction = config.isProduction || false;
+    const requiresAcknowledgment = mode === 'cloud' && isProduction;
+
+    res.json({
+        type,
+        mode,
+        isProduction,
+        isCloud: mode === 'cloud',
+        requiresAcknowledgment,
+        warning: config.warning || null,
+        description: config.description || ''
+    });
+});
+
+// Get setup instructions for a specific triplestore
+app.get('/api/triplestore/setup/:type', (req, res) => {
+    const { type } = req.params;
+    const config = TRIPLESTORE_DEFAULTS[type];
+
+    if (!config) {
+        return res.status(404).json({ error: 'Unknown triplestore type' });
+    }
+
+    const setupInfo = {
+        type,
+        name: type === 'fuseki' ? 'Apache Fuseki' : type === 'stardog' ? 'Stardog' : 'GraphDB',
+        local: {
+            description: config.local.description,
+            setupInstructions: config.local.setupInstructions,
+            dockerCommand: config.local.dockerCommand,
+            defaultEndpoint: config.local.baseUrl,
+            freeEditionLimits: config.local.freeEditionLimits,
+            defaultCredentials: config.local.defaultCredentials
+        },
+        cloud: {
+            description: config.cloud.description,
+            warning: config.cloud.warning,
+            isProduction: config.cloud.isProduction
+        },
+        paths: {
+            query: config.local.queryPath,
+            update: config.local.updatePath,
+            data: config.local.dataPath
+        }
+    };
+
+    res.json(setupInfo);
 });
 
 // Execute SPARQL query on any triplestore

@@ -9,8 +9,9 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "node-fetch": "^2.7.0",
-    "n3": "^1.17.2"
+    "multer": "^2.0.2",
+    "n3": "^1.17.2",
+    "node-fetch": "^2.7.0"
   },
   "author": "Giulio V",
   "license": "MIT"

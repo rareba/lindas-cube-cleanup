@@ -1,20 +1,57 @@
 // LINDAS Cube Cleanup Demo Application
 
-// Triplestore defaults
+// Triplestore defaults with enhanced local setup info
 const TRIPLESTORE_DEFAULTS = {
     fuseki: {
-        local: { baseUrl: 'http://localhost:3030', hint: 'For local Fuseki, use http://localhost:3030' },
-        cloud: { baseUrl: 'https://lindas.admin.ch', hint: 'For LINDAS, use https://lindas.admin.ch' }
+        local: {
+            baseUrl: 'http://localhost:3030',
+            hint: 'For local Fuseki, use http://localhost:3030',
+            description: 'Apache Fuseki - Local Development',
+            isProduction: false
+        },
+        cloud: {
+            baseUrl: 'https://lindas.admin.ch',
+            hint: 'For LINDAS, use https://lindas.admin.ch',
+            description: 'LINDAS Production - Swiss Government Linked Data',
+            isProduction: true,
+            warning: 'CAUTION: This is the production LINDAS endpoint. All changes affect live data!'
+        }
     },
     stardog: {
-        local: { baseUrl: 'http://localhost:5820', hint: 'For local Stardog, use http://localhost:5820' },
-        cloud: { baseUrl: 'https://sd-xxxxx.stardog.cloud:5820', hint: 'Enter your Stardog Cloud instance URL' }
+        local: {
+            baseUrl: 'http://localhost:5820',
+            hint: 'For local Stardog Free, use http://localhost:5820',
+            description: 'Stardog Free - Local Development (up to 25 databases, 10GB data)',
+            isProduction: false,
+            defaultCredentials: { username: 'admin', password: 'admin' }
+        },
+        cloud: {
+            baseUrl: 'https://sd-xxxxx.stardog.cloud:5820',
+            hint: 'Enter your Stardog Cloud instance URL',
+            description: 'Stardog Cloud - Production Environment',
+            isProduction: true,
+            warning: 'CAUTION: This is a cloud/production endpoint. All changes affect live data!'
+        }
     },
     graphdb: {
-        local: { baseUrl: 'http://localhost:7200', hint: 'For local GraphDB, use http://localhost:7200' },
-        cloud: { baseUrl: 'https://your-instance.graphdb.cloud', hint: 'Enter your GraphDB Cloud instance URL' }
+        local: {
+            baseUrl: 'http://localhost:7200',
+            hint: 'For local GraphDB Free, use http://localhost:7200',
+            description: 'GraphDB Free - Local Development (unlimited data, 2 queries/second)',
+            isProduction: false
+        },
+        cloud: {
+            baseUrl: 'https://your-instance.graphdb.cloud',
+            hint: 'Enter your GraphDB Cloud instance URL',
+            description: 'GraphDB Cloud - Production Environment',
+            isProduction: true,
+            warning: 'CAUTION: This is a cloud/production endpoint. All changes affect live data!'
+        }
     }
 };
+
+// Cloud mode state
+let cloudModeAcknowledged = false;
 
 // State management
 const state = {
@@ -142,9 +179,26 @@ function updateTriplestoreUI() {
         }
     }
 
-    // Show/hide cloud warning banner
+    // Show/hide cloud warning banner (only show if not acknowledged)
     if (elements.cloudWarningBanner) {
-        elements.cloudWarningBanner.classList.toggle('hidden', mode !== 'cloud');
+        const showCloudWarning = mode === 'cloud' && !cloudModeAcknowledged;
+        elements.cloudWarningBanner.classList.toggle('hidden', !showCloudWarning);
+    }
+
+    // Show/hide local mode banner
+    const localModeBanner = document.getElementById('local-mode-banner');
+    if (localModeBanner) {
+        localModeBanner.classList.toggle('hidden', mode !== 'local');
+    }
+
+    // Auto-fill Stardog credentials for local mode
+    if (type === 'stardog' && mode === 'local' && defaults?.defaultCredentials) {
+        if (elements.authUsername && !elements.authUsername.value) {
+            elements.authUsername.value = defaults.defaultCredentials.username;
+        }
+        if (elements.authPassword && !elements.authPassword.value) {
+            elements.authPassword.value = defaults.defaultCredentials.password;
+        }
     }
 
     // Update status indicator text
@@ -224,10 +278,43 @@ function initEventListeners() {
         switchToLocalBtn.addEventListener('click', () => {
             if (elements.triplestoreMode) {
                 elements.triplestoreMode.value = 'local';
+                cloudModeAcknowledged = false;
                 updateTriplestoreUI();
             }
         });
     }
+
+    // Cloud warning banner - acknowledge button
+    const acknowledgeCloudBtn = document.getElementById('btn-acknowledge-cloud');
+    if (acknowledgeCloudBtn) {
+        acknowledgeCloudBtn.addEventListener('click', () => {
+            cloudModeAcknowledged = true;
+            if (elements.cloudWarningBanner) {
+                elements.cloudWarningBanner.classList.add('hidden');
+            }
+        });
+    }
+
+    // Setup guide tabs
+    const setupTabs = document.querySelectorAll('.setup-tab-btn');
+    setupTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const setupType = tab.dataset.setup;
+
+            // Update active tab
+            setupTabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+
+            // Show corresponding content
+            document.querySelectorAll('.setup-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            const targetContent = document.getElementById('setup-' + setupType);
+            if (targetContent) {
+                targetContent.classList.remove('hidden');
+            }
+        });
+    });
 
     // Setup tab
     document.getElementById('btn-check-fuseki').addEventListener('click', checkFusekiConnection);
@@ -421,9 +508,51 @@ function showUploadPreview(data, filename) {
     previewInfo.appendChild(createPreviewRow('Format:', data.format));
 
     if (data.isPackage && data.metadata) {
+        // Show package version
+        const packageVersion = data.packageVersion || '1.0';
+        previewInfo.appendChild(createPreviewRow('Package Version:', packageVersion));
+
+        // Show metadata based on version
         previewInfo.appendChild(createPreviewRow('Source Graph:', data.metadata.graphUri || 'Not specified'));
         previewInfo.appendChild(createPreviewRow('Source Cube:', data.metadata.cubeUri || 'Not specified'));
         previewInfo.appendChild(createPreviewRow('Source Type:', data.metadata.sourceType || 'Unknown'));
+
+        // v2.0 specific info
+        if (packageVersion === '2.0') {
+            if (data.metadata.sourceMode) {
+                previewInfo.appendChild(createPreviewRow('Source Mode:', data.metadata.sourceMode));
+            }
+            if (data.metadata.cubeName) {
+                previewInfo.appendChild(createPreviewRow('Cube Name:', data.metadata.cubeName));
+            }
+            if (data.metadata.version !== null && data.metadata.version !== undefined) {
+                previewInfo.appendChild(createPreviewRow('Cube Version:', 'v' + data.metadata.version));
+            }
+            if (data.metadata.exportedAt) {
+                const exportDate = new Date(data.metadata.exportedAt).toLocaleString();
+                previewInfo.appendChild(createPreviewRow('Exported At:', exportDate));
+            }
+            if (data.metadata.sizeBytes) {
+                const sizeMB = (data.metadata.sizeBytes / (1024 * 1024)).toFixed(2);
+                previewInfo.appendChild(createPreviewRow('File Size:', sizeMB + ' MB'));
+            }
+
+            // Show restore instructions if available
+            if (data.restore && data.restore.targetGraph) {
+                const restoreSection = document.createElement('div');
+                restoreSection.className = 'restore-metadata';
+
+                const restoreTitle = document.createElement('h4');
+                restoreTitle.textContent = 'Restore Information';
+                restoreSection.appendChild(restoreTitle);
+
+                const targetInfo = document.createElement('p');
+                targetInfo.textContent = 'Recommended target graph: ' + data.restore.targetGraph;
+                restoreSection.appendChild(targetInfo);
+
+                previewInfo.appendChild(restoreSection);
+            }
+        }
 
         // Pre-fill target graph
         const targetGraphInput = document.getElementById('import-target-graph');
@@ -432,6 +561,7 @@ function showUploadPreview(data, filename) {
         }
     } else {
         previewInfo.appendChild(createPreviewRow('Package Type:', 'Raw N-Triples (no metadata)'));
+        previewInfo.appendChild(createPreviewRow('Note:', 'You will need to specify the target graph manually'));
     }
 
     previewEl.classList.remove('hidden');
