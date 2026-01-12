@@ -166,3 +166,35 @@ The Query Editor also works correctly:
 3. Both query types properly connect to the configured Stardog Cloud endpoint
 
 Both test runs (8:32 PM and 9:45 PM) confirmed the full workflow operates as expected.
+
+## Query Editor Bug Fixes (10:00 PM)
+
+### Issues Found
+1. **Graph/Cube Browse buttons not loading data**: API endpoints `/api/query/graphs` and `/api/query/cubes` returned 500 errors
+2. **SPARQL query not fully displayed**: "Delete Old Versions" template only showed placeholder comments
+
+### Root Cause Analysis
+- Frontend sends `baseUrl` and `database` fields
+- Server endpoints expected `endpoint` and `dataset` fields
+- Field name mismatch caused URL construction failures
+
+### Fixes Applied
+
+**server.js:**
+- `/api/query/graphs`: Accept both `endpoint`/`baseUrl` and `dataset`/`database`
+- `/api/query/graphs`: Return proper `{ graphs: [...] }` response format
+- `/api/query/cubes`: Accept both field naming conventions
+- `/api/query/cubes`: Return proper `{ cubes: [...] }` response format
+
+**app.js:**
+- `delete-old-versions` template: Replaced placeholder with full SPARQL query including:
+  - Warning comments
+  - PREFIX declarations
+  - Stardog-specific syntax notes
+  - Complete DELETE/WHERE clause structure
+  - UNION patterns for cube and related data
+
+### Verification
+- Graph dropdown loads: `https://lindas.admin.ch/sfoe`, `https://test.lindas.admin.ch/test/cubes`
+- Cube dropdown loads: `.../cube/version/4`, `.../cube/version/5`
+- Full query logic displayed in SPARQL Query textarea
