@@ -24,3 +24,18 @@ Desktop.ini
 .idea/
 .vscode/
 *.swp
+
+# Claude Code temp files
+.claude/
+tmpclaude-*
+nul
+
+# Backups
+**/backups/
+**/backups_old/
+
+# Config files with credentials
+cleanup-service/config/config.json
+
+# Package lock files (keep web-app one)
+cleanup-service/package-lock.json

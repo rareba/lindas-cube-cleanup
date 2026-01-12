@@ -11,7 +11,8 @@
     "express": "^4.18.2",
     "multer": "^2.0.2",
     "n3": "^1.17.2",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "stardog": "^9.1.1"
   },
   "author": "Giulio V",
   "license": "MIT"

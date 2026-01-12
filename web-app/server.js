@@ -1007,8 +1007,11 @@ app.post('/api/fuseki/import', async (req, res) => {
 // List cube versions in a graph (uses universal query 01)
 app.post('/api/cubes/list-versions', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, username, password } = req.body;
-        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
+        // Support both endpoint and baseUrl, and both dataset and database
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
         const auth = { username, password };
 
         let query = loadQuery('01-list-all-cube-versions.rq');
@@ -1039,7 +1042,18 @@ app.post('/api/cubes/list-versions', async (req, res) => {
         query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
         const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
-        res.json(result);
+
+        // Format response for client - extract versions from SPARQL bindings
+        const versions = (result.results?.bindings || []).map(binding => ({
+            baseCube: binding.baseCube?.value,
+            cube: binding.cube?.value,
+            version: binding.version?.value,
+            dateCreated: binding.dateCreated?.value,
+            dateModified: binding.dateModified?.value,
+            title: binding.title?.value
+        }));
+
+        res.json({ versions });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1048,8 +1062,10 @@ app.post('/api/cubes/list-versions', async (req, res) => {
 // Count versions per cube (uses universal query 02)
 app.post('/api/cubes/count-versions', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, username, password } = req.body;
-        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
         const auth = { username, password };
 
         let query = loadQuery('02-count-versions-per-cube.rq');
@@ -1083,55 +1099,35 @@ app.post('/api/cubes/count-versions', async (req, res) => {
     }
 });
 
-// Identify versions to delete (uses universal query 03)
+// Identify versions to delete - gets all versions and calculates which to keep/delete
 app.post('/api/cubes/identify-deletions', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, username, password } = req.body;
-        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
         const auth = { username, password };
 
-        let query = loadQuery('03-identify-versions-to-delete.rq');
+        // Use the list-versions query to get ALL versions
+        let query = loadQuery('01-list-all-cube-versions.rq');
         if (!query) {
             query = `
                 PREFIX cube: <https://cube.link/>
                 PREFIX schema: <http://schema.org/>
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-                SELECT ?baseCube ?cube ?version ?rank ?action ?title
+                SELECT ?baseCube ?cube ?version ?dateCreated ?dateModified ?title
                 WHERE {
                     GRAPH <GRAPH_URI> {
                         ?cube a cube:Cube .
+                        OPTIONAL { ?cube schema:dateCreated ?dateCreated }
+                        OPTIONAL { ?cube schema:dateModified ?dateModified }
                         OPTIONAL { ?cube schema:name ?title . FILTER(LANG(?title) = "de" || LANG(?title) = "") }
 
                         BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube)
-                        BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?versionStr)
+                        BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)/?$", "$2") AS ?versionStr)
                         BIND(IF(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+/?$"), xsd:integer(?versionStr), 0) AS ?version)
-
-                        OPTIONAL {
-                            SELECT ?cube (COUNT(DISTINCT ?newerCube) AS ?newerCount)
-                            WHERE {
-                                GRAPH <GRAPH_URI> {
-                                    ?cube a cube:Cube .
-                                    ?newerCube a cube:Cube .
-
-                                    BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube1)
-                                    BIND(REPLACE(STR(?newerCube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube2)
-                                    FILTER(?baseCube1 = ?baseCube2)
-
-                                    BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?v1Str)
-                                    BIND(REPLACE(STR(?newerCube), "^.*/([0-9]+)/?$", "$1") AS ?v2Str)
-                                    BIND(xsd:integer(?v1Str) AS ?v1)
-                                    BIND(xsd:integer(?v2Str) AS ?v2)
-                                    FILTER(?v2 > ?v1)
-                                }
-                            }
-                            GROUP BY ?cube
-                        }
-
-                        BIND(COALESCE(?newerCount, 0) + 1 AS ?rank)
-                        BIND(IF(?rank <= 2, "KEEP", "DELETE") AS ?action)
                     }
-                    FILTER(REGEX(STR(?cube), "^.*/[^/]+/[0-9]+/?$"))
                 }
                 ORDER BY ?baseCube DESC(?version)
             `;
@@ -1140,7 +1136,48 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
         query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
         const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
-        res.json(result);
+
+        // Parse SPARQL results into version objects
+        const bindings = result.results?.bindings || [];
+        const versions = bindings.map(binding => ({
+            baseCube: binding.baseCube?.value,
+            cube: binding.cube?.value,
+            version: parseInt(binding.version?.value) || 0,
+            dateCreated: binding.dateCreated?.value,
+            title: binding.title?.value
+        }));
+
+        // Group by baseCube and calculate ranks
+        const baseCubeGroups = {};
+        versions.forEach(v => {
+            if (!baseCubeGroups[v.baseCube]) {
+                baseCubeGroups[v.baseCube] = [];
+            }
+            baseCubeGroups[v.baseCube].push(v);
+        });
+
+        // Sort each group by version descending and assign ranks
+        const toDelete = [];
+        const toKeep = [];
+
+        Object.values(baseCubeGroups).forEach(group => {
+            // Sort by version number descending (newest first)
+            group.sort((a, b) => b.version - a.version);
+
+            group.forEach((v, index) => {
+                const rank = index + 1; // 1-based rank
+                const action = rank <= 2 ? 'KEEP' : 'DELETE';
+                const cube = { ...v, rank, action };
+
+                if (action === 'DELETE') {
+                    toDelete.push(cube);
+                } else {
+                    toKeep.push(cube);
+                }
+            });
+        });
+
+        res.json({ toDelete, toKeep });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1149,8 +1186,10 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
 // Preview triples to delete for a specific cube
 app.post('/api/cubes/preview-deletion', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
-        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
         const auth = { username, password };
 
         const query = `
@@ -1215,8 +1254,10 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
 // Delete observations - Query 07
 app.post('/api/cubes/delete-observations', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
-        const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         const auth = { username, password };
 
         const query = `
@@ -1246,8 +1287,10 @@ app.post('/api/cubes/delete-observations', async (req, res) => {
 // Delete observation links - Query 08
 app.post('/api/cubes/delete-observation-links', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
-        const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         const auth = { username, password };
 
         const query = `
@@ -1276,8 +1319,10 @@ app.post('/api/cubes/delete-observation-links', async (req, res) => {
 // Delete cube metadata - Query 09
 app.post('/api/cubes/delete-metadata', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
-        const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         const auth = { username, password };
 
         const query = `
@@ -1482,7 +1527,10 @@ app.post('/api/query/cubes', async (req, res) => {
 // Execute raw SPARQL query (SELECT or UPDATE)
 app.post('/api/query/execute', async (req, res) => {
     try {
-        const { endpoint, dataset, query, queryType, username, password } = req.body;
+        const { endpoint, baseUrl, dataset, database, query, queryType, username, password } = req.body;
+        // Support both endpoint/baseUrl and dataset/database field names
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
         const auth = { username, password };
 
         if (!query || !query.trim()) {
@@ -1493,7 +1541,7 @@ app.post('/api/query/execute', async (req, res) => {
 
         if (queryType === 'update') {
             // Execute UPDATE query
-            const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+            const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
             await executeSparqlUpdate(updateEndpoint, query, auth);
             const duration = Date.now() - startTime;
 
@@ -1505,7 +1553,7 @@ app.post('/api/query/execute', async (req, res) => {
             });
         } else {
             // Execute SELECT query
-            const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
+            const sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
             const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
             const duration = Date.now() - startTime;
 
