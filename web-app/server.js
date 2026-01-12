@@ -3,6 +3,7 @@ const fetch = require('node-fetch');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const stardog = require('stardog');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -300,20 +301,80 @@ async function checkTriplestoreConnection(config) {
 
     switch (type) {
         case 'stardog':
-            // Stardog: GET /admin/databases
-            checkUrl = `${base}/admin/databases`;
+            // Stardog: Use official stardog.js library
+            const stardogDb = database || 'lindas';
             try {
-                const response = await fetch(checkUrl, {
-                    method: 'GET',
-                    headers: { 'Accept': 'application/json', ...authHeaders }
+                console.log(`Stardog: Connecting to ${base} with user ${username}`);
+                const conn = new stardog.Connection({
+                    username: username || 'admin',
+                    password: password || 'admin',
+                    endpoint: base
                 });
-                if (response.ok) {
-                    const data = await response.json();
-                    availableDatasets = data.databases || [];
-                    return { connected: true, type: 'stardog', mode, baseUrl: base, databases: availableDatasets };
+
+                // Try to list databases first
+                console.log(`Stardog: Listing databases...`);
+                const dbListResult = await stardog.db.list(conn);
+                console.log(`Stardog db.list result:`, dbListResult);
+
+                if (dbListResult.ok) {
+                    const databases = dbListResult.body.databases || [];
+                    return {
+                        connected: true,
+                        type: 'stardog',
+                        mode,
+                        baseUrl: base,
+                        databases: databases,
+                        message: `Connected! Available databases: ${databases.join(', ') || 'none'}`
+                    };
+                } else {
+                    // db.list failed, try a simple query on the specific database
+                    console.log(`Stardog: db.list failed, trying query on ${stardogDb}...`);
+                    const queryResult = await stardog.query.execute(
+                        conn,
+                        stardogDb,
+                        'ASK { ?s ?p ?o }',
+                        'application/sparql-results+json'
+                    );
+                    console.log(`Stardog query result:`, queryResult);
+
+                    if (queryResult.ok) {
+                        return {
+                            connected: true,
+                            type: 'stardog',
+                            mode,
+                            baseUrl: base,
+                            database: stardogDb,
+                            message: `Connected to database: ${stardogDb}`
+                        };
+                    } else {
+                        const status = dbListResult.status || queryResult.status;
+                        let errorMessage = `Connection failed: ${dbListResult.statusText || queryResult.statusText || 'Unknown error'}. Status: ${status}`;
+
+                        // Provide helpful message for Stardog Cloud auth failures
+                        if (status === 401 && base.includes('.stardog.cloud')) {
+                            errorMessage = `Authentication failed (401). For Stardog Cloud: SSO credentials do not work for API access. You need to create a dedicated API user in Stardog Studio: 1) Log into cloud.stardog.com 2) Click your connection 3) Launch Stardog Studio 4) Go to Security > Users 5) Create a new user with username/password 6) Use those credentials here.`;
+                        } else if (status === 401) {
+                            errorMessage = `Authentication failed (401). Check your username and password.`;
+                        }
+
+                        return {
+                            connected: false,
+                            type: 'stardog',
+                            mode,
+                            baseUrl: base,
+                            error: errorMessage
+                        };
+                    }
                 }
             } catch (err) {
-                // Continue to return not connected
+                console.error(`Stardog connection error:`, err);
+                return {
+                    connected: false,
+                    type: 'stardog',
+                    mode,
+                    baseUrl: base,
+                    error: `Connection error: ${err.message}`
+                };
             }
             break;
 
@@ -1352,10 +1413,10 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
 
 // ========== QUERY EDITOR API ==========
 
-// List all graphs in Fuseki dataset (for Query Editor dropdown)
+// List all graphs in triplestore (for Query Editor dropdown)
 app.post('/api/query/graphs', async (req, res) => {
     try {
-        const { endpoint, dataset } = req.body;
+        const { endpoint, dataset, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
 
         const query = `
@@ -1368,7 +1429,7 @@ app.post('/api/query/graphs', async (req, res) => {
             LIMIT 100
         `;
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, { username, password });
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1378,7 +1439,7 @@ app.post('/api/query/graphs', async (req, res) => {
 // List all cubes in a graph (for Query Editor dropdown)
 app.post('/api/query/cubes', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri } = req.body;
+        const { endpoint, dataset, graphUri, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
 
         const query = `
@@ -1402,7 +1463,7 @@ app.post('/api/query/cubes', async (req, res) => {
             LIMIT 200
         `;
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, { username, password });
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1412,7 +1473,8 @@ app.post('/api/query/cubes', async (req, res) => {
 // Execute raw SPARQL query (SELECT or UPDATE)
 app.post('/api/query/execute', async (req, res) => {
     try {
-        const { endpoint, dataset, query, queryType } = req.body;
+        const { endpoint, dataset, query, queryType, username, password } = req.body;
+        const auth = { username, password };
 
         if (!query || !query.trim()) {
             return res.status(400).json({ error: 'Query is required' });
@@ -1423,7 +1485,7 @@ app.post('/api/query/execute', async (req, res) => {
         if (queryType === 'update') {
             // Execute UPDATE query
             const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
-            await executeSparqlUpdate(updateEndpoint, query);
+            await executeSparqlUpdate(updateEndpoint, query, auth);
             const duration = Date.now() - startTime;
 
             res.json({
@@ -1435,7 +1497,7 @@ app.post('/api/query/execute', async (req, res) => {
         } else {
             // Execute SELECT query
             const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
-            const result = await executeSparqlSelect(sparqlEndpoint, query);
+            const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
             const duration = Date.now() - startTime;
 
             res.json({

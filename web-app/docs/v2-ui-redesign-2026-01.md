@@ -140,6 +140,19 @@ To create API credentials:
 
 Use these API user credentials (not SSO) when connecting to Stardog Cloud from this application.
 
+##### Test Stardog Cloud Instance
+
+A test Stardog Cloud instance is available for development:
+
+| Setting | Value |
+|---------|-------|
+| Endpoint | `https://sd-85766d45.stardog.cloud:5820` |
+| Database | `lindas` |
+| Username | `gva` |
+| Password | `Gund@m123gund@m123` |
+
+This instance was created via Stardog Cloud Free tier and can be used for testing the application.
+
 #### GraphDB
 - Docker installation
 - Manual installation
