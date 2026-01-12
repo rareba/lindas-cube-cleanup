@@ -120,6 +120,36 @@ WHERE {
 ### Stardog SPARQL Syntax Note
 Stardog requires separate DELETE and WHERE clauses. The shorthand `DELETE WHERE { ... }` syntax with FILTER does not work.
 
+## Second Test Run (9:45 PM)
+
+### Test Setup
+Reloaded 5 cube versions via API after the previous Query Editor DELETE test.
+
+### Deletion Wizard Execution
+- Step 1: Loaded graph `https://lindas.admin.ch/sfoe` - found 5 cube versions
+- Step 2: Statistics showed 1 base cube, 5 versions, 3 to delete
+- Step 3: Preview confirmed correct ranking (KEEP v5, v4; DELETE v3, v2, v1)
+- Step 4: Confirmed and executed deletion
+- Step 5: **Cleanup Complete** at 1/12/2026, 9:45:36 PM
+
+### Results
+- **3 Versions Deleted**: v3, v2, v1
+- **2 Versions Preserved**: v5, v4
+- Backups created and available for 7 days
+
+### Verification Query
+```sparql
+PREFIX cube: <https://cube.link/>
+SELECT ?cube WHERE {
+  GRAPH <https://lindas.admin.ch/sfoe> {
+    ?cube a cube:Cube
+  }
+}
+```
+- Result: **2 results** (991ms)
+  - `.../cube/version/4`
+  - `.../cube/version/5`
+
 ## Conclusion
 
 The Deletion Wizard workflow works correctly:
@@ -134,3 +164,5 @@ The Query Editor also works correctly:
 1. SELECT queries execute and return results
 2. DELETE queries with REGEX patterns work with Stardog (using proper syntax)
 3. Both query types properly connect to the configured Stardog Cloud endpoint
+
+Both test runs (8:32 PM and 9:45 PM) confirmed the full workflow operates as expected.
