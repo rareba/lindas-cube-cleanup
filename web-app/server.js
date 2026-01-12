@@ -1007,8 +1007,9 @@ app.post('/api/fuseki/import', async (req, res) => {
 // List cube versions in a graph (uses universal query 01)
 app.post('/api/cubes/list-versions', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri } = req.body;
+        const { endpoint, dataset, graphUri, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const auth = { username, password };
 
         let query = loadQuery('01-list-all-cube-versions.rq');
         if (!query) {
@@ -1037,7 +1038,7 @@ app.post('/api/cubes/list-versions', async (req, res) => {
 
         query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1047,8 +1048,9 @@ app.post('/api/cubes/list-versions', async (req, res) => {
 // Count versions per cube (uses universal query 02)
 app.post('/api/cubes/count-versions', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri } = req.body;
+        const { endpoint, dataset, graphUri, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const auth = { username, password };
 
         let query = loadQuery('02-count-versions-per-cube.rq');
         if (!query) {
@@ -1074,7 +1076,7 @@ app.post('/api/cubes/count-versions', async (req, res) => {
 
         query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1084,8 +1086,9 @@ app.post('/api/cubes/count-versions', async (req, res) => {
 // Identify versions to delete (uses universal query 03)
 app.post('/api/cubes/identify-deletions', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri } = req.body;
+        const { endpoint, dataset, graphUri, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const auth = { username, password };
 
         let query = loadQuery('03-identify-versions-to-delete.rq');
         if (!query) {
@@ -1136,7 +1139,7 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
 
         query = query.replace(/<GRAPH_URI>/g, `<${graphUri}>`);
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1146,8 +1149,9 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
 // Preview triples to delete for a specific cube
 app.post('/api/cubes/preview-deletion', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri } = req.body;
+        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const auth = { username, password };
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1201,7 +1205,7 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
             }
         `;
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1211,8 +1215,9 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
 // Delete observations - Query 07
 app.post('/api/cubes/delete-observations', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri } = req.body;
+        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
         const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+        const auth = { username, password };
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1231,7 +1236,7 @@ app.post('/api/cubes/delete-observations', async (req, res) => {
             }
         `;
 
-        await executeSparqlUpdate(updateEndpoint, query);
+        await executeSparqlUpdate(updateEndpoint, query, auth);
         res.json({ success: true, message: 'Deleted observation triples' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1241,8 +1246,9 @@ app.post('/api/cubes/delete-observations', async (req, res) => {
 // Delete observation links - Query 08
 app.post('/api/cubes/delete-observation-links', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri } = req.body;
+        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
         const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+        const auth = { username, password };
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1260,7 +1266,7 @@ app.post('/api/cubes/delete-observation-links', async (req, res) => {
             }
         `;
 
-        await executeSparqlUpdate(updateEndpoint, query);
+        await executeSparqlUpdate(updateEndpoint, query, auth);
         res.json({ success: true, message: 'Deleted observation links' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1270,8 +1276,9 @@ app.post('/api/cubes/delete-observation-links', async (req, res) => {
 // Delete cube metadata - Query 09
 app.post('/api/cubes/delete-metadata', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri } = req.body;
+        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
         const updateEndpoint = dataset ? `${endpoint}/${dataset}/update` : `${endpoint}/update`;
+        const auth = { username, password };
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1334,7 +1341,7 @@ app.post('/api/cubes/delete-metadata', async (req, res) => {
             }
         `;
 
-        await executeSparqlUpdate(updateEndpoint, query);
+        await executeSparqlUpdate(updateEndpoint, query, auth);
         res.json({ success: true, message: 'Deleted cube metadata and shapes' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1344,8 +1351,9 @@ app.post('/api/cubes/delete-metadata', async (req, res) => {
 // Count remaining observations for a cube
 app.post('/api/cubes/count-observations', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri } = req.body;
+        const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const auth = { username, password };
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1360,7 +1368,7 @@ app.post('/api/cubes/count-observations', async (req, res) => {
             }
         `;
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1370,8 +1378,9 @@ app.post('/api/cubes/count-observations', async (req, res) => {
 // Count total triples in a graph
 app.post('/api/cubes/count-triples', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri } = req.body;
+        const { endpoint, dataset, graphUri, username, password } = req.body;
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const auth = { username, password };
 
         const query = `
             SELECT (COUNT(*) AS ?count)
@@ -1380,7 +1389,7 @@ app.post('/api/cubes/count-triples', async (req, res) => {
             }
         `;
 
-        const result = await executeSparqlSelect(sparqlEndpoint, query);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
