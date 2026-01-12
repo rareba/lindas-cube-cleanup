@@ -1470,8 +1470,11 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
 // List all graphs in triplestore (for Query Editor dropdown)
 app.post('/api/query/graphs', async (req, res) => {
     try {
-        const { endpoint, dataset, username, password } = req.body;
-        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
+        const { endpoint, baseUrl, dataset, database, username, password } = req.body;
+        // Support both endpoint/baseUrl and dataset/database field names
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
 
         const query = `
             SELECT DISTINCT ?graph (COUNT(*) as ?tripleCount)
@@ -1484,8 +1487,12 @@ app.post('/api/query/graphs', async (req, res) => {
         `;
 
         const result = await executeSparqlSelect(sparqlEndpoint, query, { username, password });
-        res.json(result);
+        // Extract graph URIs from results
+        const bindings = result.results?.bindings || [];
+        const graphs = bindings.map(b => b.graph?.value).filter(Boolean);
+        res.json({ graphs });
     } catch (error) {
+        console.error('Error fetching graphs:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
@@ -1493,8 +1500,11 @@ app.post('/api/query/graphs', async (req, res) => {
 // List all cubes in a graph (for Query Editor dropdown)
 app.post('/api/query/cubes', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, username, password } = req.body;
-        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : `${endpoint}/query`;
+        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
+        // Support both endpoint/baseUrl and dataset/database field names
+        const base = endpoint || baseUrl;
+        const db = dataset || database;
+        const sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1518,8 +1528,12 @@ app.post('/api/query/cubes', async (req, res) => {
         `;
 
         const result = await executeSparqlSelect(sparqlEndpoint, query, { username, password });
-        res.json(result);
+        // Extract cube URIs from results
+        const bindings = result.results?.bindings || [];
+        const cubes = bindings.map(b => b.cube?.value).filter(Boolean);
+        res.json({ cubes });
     } catch (error) {
+        console.error('Error fetching cubes:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
