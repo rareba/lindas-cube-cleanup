@@ -3,706 +3,874 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LINDAS Cube Version Cleanup</title>
+    <title>LINDAS Cube Manager</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <header id="app-header" class="local-mode">
-        <div class="header-content">
-            <h1>LINDAS Cube Version Cleanup</h1>
-            <p class="subtitle">Demo Tool - Delete old cube versions while preserving the newest 2</p>
-            <!-- Cloud Warning in Title Bar -->
-            <div id="cloud-title-warning" class="cloud-title-warning hidden">
-                <span class="warning-icon">&#9888;</span>
-                <span class="warning-text">CLOUD MODE - Changes affect LIVE DATA!</span>
-                <button id="btn-switch-to-local-header" class="btn-switch-local">Switch to Local</button>
-            </div>
-        </div>
-        <div class="connection-status">
-            <div id="mode-indicator" class="mode-indicator local">
-                <span class="mode-badge">LOCAL</span>
-            </div>
-            <div id="fuseki-status" class="status-indicator disconnected">
-                <span class="status-dot"></span>
-                <span class="status-text">Fuseki: Disconnected</span>
-            </div>
-        </div>
-    </header>
-
-    <nav class="tabs">
-        <button class="tab-btn active" data-tab="setup">1. Setup</button>
-        <button class="tab-btn" data-tab="import">2. Import Data</button>
-        <button class="tab-btn" data-tab="explore">3. Explore Cubes</button>
-        <button class="tab-btn" data-tab="cleanup">4. Cleanup</button>
-        <button class="tab-btn" data-tab="query-editor">5. Query Editor</button>
-        <button class="tab-btn" data-tab="backups">6. Backups</button>
-        <button class="tab-btn" data-tab="docs">7. Documentation</button>
-    </nav>
-
-    <main>
-        <!-- Setup Tab -->
-        <section id="setup" class="tab-content active">
-            <!-- Local Mode Info Banner (simplified) -->
-            <div id="local-mode-banner" class="info-banner local-safe">
-                <div class="info-icon">&#10003;</div>
-                <div class="info-content">
-                    <strong>Local Development Mode</strong>
-                    <p>You are working with a local triplestore. Changes only affect your local data - safe for testing and development.</p>
-                </div>
+    <!-- Main Layout Container -->
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h1 class="app-title">LINDAS<br><span>Cube Manager</span></h1>
+                <p class="app-version">v2.0</p>
             </div>
 
-            <div class="card">
-                <h2>Triplestore Configuration</h2>
-                <p class="description">Configure the connection to your triplestore instance.</p>
-
-                <div class="form-row">
-                    <div class="form-group half">
-                        <label for="triplestore-type">Triplestore Type:</label>
-                        <select id="triplestore-type" class="select-input">
-                            <option value="fuseki" selected>Apache Fuseki</option>
-                            <option value="stardog">Stardog</option>
-                            <option value="graphdb">GraphDB</option>
-                        </select>
-                    </div>
-                    <div class="form-group half">
-                        <label for="triplestore-mode">Mode:</label>
-                        <select id="triplestore-mode" class="select-input">
-                            <option value="local" selected>Local (Development)</option>
-                            <option value="cloud">Cloud (Production)</option>
-                        </select>
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-section-title">Mode</div>
+                    <div class="mode-toggle" id="mode-toggle">
+                        <button class="mode-btn active" data-mode="offline" title="Work with local triplestore">
+                            <span class="mode-icon">&#128190;</span>
+                            <span class="mode-label">Offline</span>
+                        </button>
+                        <button class="mode-btn" data-mode="online" title="Connect to remote triplestore">
+                            <span class="mode-icon">&#127760;</span>
+                            <span class="mode-label">Online</span>
+                        </button>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="fuseki-endpoint">Endpoint URL:</label>
-                    <input type="text" id="fuseki-endpoint" value="http://localhost:3030" placeholder="http://localhost:3030">
-                    <small id="endpoint-hint" class="form-hint">For local Fuseki, use http://localhost:3030</small>
+                <div class="nav-section">
+                    <div class="nav-section-title">Main</div>
+                    <a href="#" class="nav-item active" data-section="connection">
+                        <span class="nav-icon">&#9881;</span>
+                        <span class="nav-text">Connection</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="download">
+                        <span class="nav-icon">&#8615;</span>
+                        <span class="nav-text">Download Data</span>
+                        <span class="nav-badge offline-only">Offline</span>
+                    </a>
                 </div>
 
-                <div class="form-row" id="fuseki-dataset-row">
-                    <div class="form-group full">
-                        <label for="fuseki-dataset">Dataset Name:</label>
-                        <input type="text" id="fuseki-dataset" value="lindas" placeholder="lindas">
-                    </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Tools</div>
+                    <a href="#" class="nav-item" data-section="wizard">
+                        <span class="nav-icon">&#10052;</span>
+                        <span class="nav-text">Deletion Wizard</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="query-editor">
+                        <span class="nav-icon">&#128196;</span>
+                        <span class="nav-text">Query Editor</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="backups">
+                        <span class="nav-icon">&#128451;</span>
+                        <span class="nav-text">Backups</span>
+                    </a>
                 </div>
 
-                <div class="form-row hidden" id="stardog-database-row">
-                    <div class="form-group full">
-                        <label for="stardog-database">Database Name:</label>
-                        <input type="text" id="stardog-database" value="mydb" placeholder="mydb">
-                    </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Help</div>
+                    <a href="#" class="nav-item" data-section="documentation">
+                        <span class="nav-icon">&#128218;</span>
+                        <span class="nav-text">Documentation</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="installation">
+                        <span class="nav-icon">&#128295;</span>
+                        <span class="nav-text">Installation Guide</span>
+                    </a>
                 </div>
+            </nav>
 
-                <div class="form-row hidden" id="graphdb-repository-row">
-                    <div class="form-group full">
-                        <label for="graphdb-repository">Repository Name:</label>
-                        <input type="text" id="graphdb-repository" value="test" placeholder="test">
-                    </div>
-                </div>
-
-                <div class="form-row hidden" id="auth-row">
-                    <div class="form-group half">
-                        <label for="auth-username">Username:</label>
-                        <input type="text" id="auth-username" value="" placeholder="admin">
-                    </div>
-                    <div class="form-group half">
-                        <label for="auth-password">Password:</label>
-                        <input type="password" id="auth-password" value="" placeholder="password">
-                    </div>
-                </div>
-
-                <div class="button-group">
-                    <button id="btn-check-fuseki" class="btn btn-primary">Check Connection</button>
-                    <button id="btn-create-dataset" class="btn btn-secondary" id="btn-create-dataset-container">Create Dataset</button>
-                </div>
-
-                <div id="fuseki-info" class="info-box hidden"></div>
-            </div>
-
-            <!-- Local Setup Guide Card -->
-            <div class="card" id="local-setup-guide">
-                <h2>Local Triplestore Setup Guide</h2>
-                <p class="description">Quick setup instructions for running a local triplestore instance.</p>
-
-                <div class="setup-tabs">
-                    <button class="setup-tab-btn active" data-setup="fuseki">Apache Fuseki</button>
-                    <button class="setup-tab-btn" data-setup="stardog">Stardog Free</button>
-                    <button class="setup-tab-btn" data-setup="graphdb">GraphDB Free</button>
-                </div>
-
-                <div class="setup-content" id="setup-fuseki">
-                    <h3>Apache Fuseki (Recommended for Testing)</h3>
-                    <p><strong>Free, open-source, easy to set up</strong></p>
-
-                    <div class="setup-option">
-                        <h4>Option 1: Download and Run</h4>
-                        <ol>
-                            <li>Download from <a href="https://jena.apache.org/download/" target="_blank">Apache Jena Downloads</a></li>
-                            <li>Extract the archive</li>
-                            <li>Run: <code>fuseki-server --mem /lindas</code></li>
-                            <li>Access at <code>http://localhost:3030</code></li>
-                        </ol>
-                    </div>
-
-                    <div class="setup-option">
-                        <h4>Option 2: Docker</h4>
-                        <pre class="code-block">docker run -d --name fuseki -p 3030:3030 \
-  -e ADMIN_PASSWORD=admin \
-  stain/jena-fuseki</pre>
-                    </div>
-
-                    <div class="setup-info">
-                        <strong>Default Settings:</strong> Endpoint: <code>http://localhost:3030</code>, Dataset: <code>lindas</code>
-                    </div>
-                </div>
-
-                <div class="setup-content hidden" id="setup-stardog">
-                    <h3>Stardog Free Edition</h3>
-                    <p><strong>Free for up to 25 databases, 10GB data</strong></p>
-
-                    <div class="setup-option">
-                        <h4>Option 1: Download and Install</h4>
-                        <ol>
-                            <li>Register and download from <a href="https://www.stardog.com/get-started/" target="_blank">Stardog Get Started</a></li>
-                            <li>Follow the installation guide for your OS</li>
-                            <li>Start server: <code>stardog-admin server start</code></li>
-                            <li>Create database: <code>stardog-admin db create -n mydb</code></li>
-                        </ol>
-                    </div>
-
-                    <div class="setup-option">
-                        <h4>Option 2: Docker</h4>
-                        <pre class="code-block">docker run -d --name stardog -p 5820:5820 \
-  -v stardog-data:/var/opt/stardog \
-  stardog/stardog:latest</pre>
-                    </div>
-
-                    <div class="setup-info">
-                        <strong>Default Settings:</strong> Endpoint: <code>http://localhost:5820</code>, User: <code>admin</code>, Password: <code>admin</code>
-                    </div>
-
-                    <div class="setup-limits">
-                        <strong>Free Edition Limits:</strong>
-                        <ul>
-                            <li>Max 25 databases</li>
-                            <li>Max 10GB data</li>
-                            <li>Max 1 hour query time</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="setup-content hidden" id="setup-graphdb">
-                    <h3>GraphDB Free Edition</h3>
-                    <p><strong>Free, unlimited data, 2 queries/second</strong></p>
-
-                    <div class="setup-option">
-                        <h4>Option 1: Download and Install</h4>
-                        <ol>
-                            <li>Download from <a href="https://graphdb.ontotext.com/documentation/free/" target="_blank">GraphDB Free</a></li>
-                            <li>Run the installer</li>
-                            <li>Access at <code>http://localhost:7200</code></li>
-                            <li>Create a repository via the web interface</li>
-                        </ol>
-                    </div>
-
-                    <div class="setup-option">
-                        <h4>Option 2: Docker</h4>
-                        <pre class="code-block">docker run -d --name graphdb -p 7200:7200 \
-  ontotext/graphdb:free</pre>
-                    </div>
-
-                    <div class="setup-info">
-                        <strong>Default Settings:</strong> Endpoint: <code>http://localhost:7200</code>, Repository: <code>test</code>
-                    </div>
-
-                    <div class="setup-limits">
-                        <strong>Free Edition Limits:</strong>
-                        <ul>
-                            <li>Max 2 queries/second</li>
-                            <li>Max 1 concurrent query</li>
-                            <li>No cluster support</li>
-                        </ul>
-                    </div>
+            <div class="sidebar-footer">
+                <div class="connection-status-sidebar" id="connection-status-sidebar">
+                    <span class="status-dot disconnected"></span>
+                    <span class="status-label">Disconnected</span>
                 </div>
             </div>
+        </aside>
 
-            <div class="card">
-                <h2>How It Works</h2>
-                <div class="workflow-steps">
-                    <div class="step">
-                        <div class="step-number">1</div>
-                        <div class="step-content">
-                            <h3>Import Data</h3>
-                            <p>Download cube data from LINDAS and import it into your local Fuseki instance for safe testing.</p>
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="content-header" id="content-header">
+                <div class="header-left">
+                    <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
+                    <h2 class="page-title" id="page-title">Connection Setup</h2>
+                </div>
+                <div class="header-right">
+                    <div class="mode-indicator" id="header-mode-indicator">
+                        <span class="mode-badge offline">OFFLINE MODE</span>
+                    </div>
+                    <div class="triplestore-info" id="header-triplestore-info">
+                        <span class="triplestore-type">Not connected</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Content Sections -->
+            <div class="content-wrapper">
+                <!-- Connection Section -->
+                <section id="section-connection" class="content-section active">
+                    <div class="section-intro">
+                        <p>Configure your connection to a local or remote SPARQL triplestore.</p>
+                    </div>
+
+                    <!-- Mode Info Banner -->
+                    <div class="info-banner mode-banner" id="mode-info-banner">
+                        <div class="info-icon">&#128190;</div>
+                        <div class="info-content">
+                            <strong>Offline Mode</strong>
+                            <p>Connect to a local triplestore instance. Download data from LINDAS and work safely without affecting production data.</p>
                         </div>
                     </div>
-                    <div class="step">
-                        <div class="step-number">2</div>
-                        <div class="step-content">
-                            <h3>Explore Cubes</h3>
-                            <p>View all cubes and their versions. Identify which cubes have more than 2 versions.</p>
-                        </div>
-                    </div>
-                    <div class="step">
-                        <div class="step-number">3</div>
-                        <div class="step-content">
-                            <h3>Preview Deletions</h3>
-                            <p>See exactly which versions will be deleted and how many triples are affected.</p>
-                        </div>
-                    </div>
-                    <div class="step">
-                        <div class="step-number">4</div>
-                        <div class="step-content">
-                            <h3>Execute Cleanup</h3>
-                            <p>Delete old versions in a controlled manner, keeping only the newest 2 versions.</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
 
-        <!-- Import Tab -->
-        <section id="import" class="tab-content">
-            <div class="card">
-                <h2>Import Data from LINDAS</h2>
-                <p class="description">Import cube data from LINDAS into your local Fuseki instance for testing.</p>
+                    <div class="card">
+                        <h3>Triplestore Configuration</h3>
 
-                <div class="form-group">
-                    <label for="lindas-graph">LINDAS Graph:</label>
-                    <div class="input-with-dropdown">
-                        <select id="lindas-graph-select" class="dropdown-select">
-                            <option value="">-- Click "Load Graphs" to see available graphs --</option>
-                        </select>
-                        <button type="button" id="btn-load-lindas-graphs" class="btn btn-small btn-secondary" title="Load all available graphs from LINDAS">Load Graphs</button>
-                    </div>
-                    <input type="text" id="lindas-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="Or enter graph URI manually">
-                </div>
-
-                <div id="lindas-graphs-status" class="info-box hidden"></div>
-            </div>
-
-            <div class="card" id="cube-import-section">
-                <h2>Import Cubes</h2>
-                <p class="description">Import all cubes from the selected graph. Downloads are rate-limited to avoid overloading the server.</p>
-
-                <div id="import-options" class="import-options">
-                    <div class="option-card primary-option">
-                        <h3>Import All Cubes</h3>
-                        <p>Download and import all cube versions from the selected graph.</p>
-                        <button id="btn-import-all-cubes" class="btn btn-primary btn-large">Import All Cubes from Graph</button>
-                    </div>
-                    <div class="option-card">
-                        <h3>Quick Demo</h3>
-                        <p>Import sample data (co2wirkung - 7 versions) for testing.</p>
-                        <button id="btn-import-sample" class="btn btn-secondary">Import Sample Data</button>
-                    </div>
-                </div>
-
-                <div id="import-progress" class="progress-container hidden">
-                    <div class="progress-header">
-                        <span id="import-step">Preparing...</span>
-                        <span id="import-counter">0 / 0</span>
-                    </div>
-                    <div class="progress-bar">
-                        <div id="import-progress-fill" class="progress-fill"></div>
-                    </div>
-                    <div class="progress-details">
-                        <p id="import-status" class="status-text"></p>
-                        <p id="import-current-cube" class="current-item"></p>
-                    </div>
-                    <div id="import-rate-limit" class="rate-limit-notice hidden">
-                        <span class="rate-icon">&#8987;</span> Rate limiting: waiting before next download...
-                    </div>
-                </div>
-
-                <div id="import-summary" class="import-summary hidden">
-                    <h3>Import Complete</h3>
-                    <div class="summary-stats">
-                        <div class="stat">
-                            <span class="stat-value" id="summary-cubes-imported">0</span>
-                            <span class="stat-label">Cubes Imported</span>
-                        </div>
-                        <div class="stat">
-                            <span class="stat-value" id="summary-triples-imported">0</span>
-                            <span class="stat-label">Triples Added</span>
-                        </div>
-                        <div class="stat">
-                            <span class="stat-value" id="summary-errors">0</span>
-                            <span class="stat-label">Errors</span>
-                        </div>
-                    </div>
-                    <div id="import-error-list" class="error-list hidden"></div>
-                    <button id="btn-go-to-explore" class="btn btn-primary">Continue to Explore Cubes</button>
-                </div>
-            </div>
-        </section>
-
-        <!-- Explore Tab -->
-        <section id="explore" class="tab-content">
-            <div class="card">
-                <h2>Local Cube Explorer</h2>
-                <p class="description">View cubes imported into your local Fuseki instance.</p>
-
-                <div class="form-group">
-                    <label for="local-graph">Graph to Explore:</label>
-                    <input type="text" id="local-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
-                </div>
-
-                <div class="button-group">
-                    <button id="btn-load-local-cubes" class="btn btn-primary">Load Local Cubes</button>
-                    <button id="btn-count-triples" class="btn btn-secondary">Count Total Triples</button>
-                </div>
-
-                <div id="triple-count-info" class="info-box hidden"></div>
-            </div>
-
-            <div class="card">
-                <h2>Cubes with Multiple Versions</h2>
-                <p class="description">These cubes have more than 2 versions and are candidates for cleanup.</p>
-
-                <div id="multi-version-cubes" class="table-container">
-                    <p class="placeholder-text">Load cubes to see version information</p>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>All Cube Versions</h2>
-                <div id="all-cube-versions" class="table-container">
-                    <p class="placeholder-text">Load cubes to see all versions</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- Cleanup Tab -->
-        <section id="cleanup" class="tab-content">
-            <div class="card">
-                <h2>Version Cleanup Preview</h2>
-                <p class="description">Preview which versions will be deleted (keeping newest 2 per cube).</p>
-
-                <div class="form-group">
-                    <label for="cleanup-graph">Graph:</label>
-                    <input type="text" id="cleanup-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
-                </div>
-
-                <button id="btn-identify-deletions" class="btn btn-primary">Identify Versions to Delete</button>
-
-                <div id="deletion-preview" class="table-container">
-                    <p class="placeholder-text">Click "Identify Versions to Delete" to see the cleanup plan</p>
-                </div>
-            </div>
-
-            <div class="card" id="deletion-detail-card" style="display: none;">
-                <h2>Deletion Details</h2>
-                <p class="description">Select a cube version below to see how many triples will be deleted.</p>
-
-                <div id="cubes-to-delete" class="scrollable-list"></div>
-
-                <div id="selected-cube-preview" class="hidden">
-                    <h3>Selected Cube: <span id="selected-cube-name"></span></h3>
-                    <div id="triple-breakdown" class="stats-grid"></div>
-                </div>
-            </div>
-
-            <div class="card" id="deletion-execution-card" style="display: none;">
-                <h2>Execute Deletion</h2>
-                <p class="description warning">Warning: This will permanently delete the selected cube version from your local Fuseki instance.</p>
-
-                <div id="deletion-queue" class="scrollable-list"></div>
-
-                <div class="button-group">
-                    <button id="btn-delete-selected" class="btn btn-danger" disabled>Delete Selected Cube</button>
-                    <button id="btn-delete-all-old" class="btn btn-danger" disabled>Delete All Old Versions</button>
-                </div>
-
-                <div id="deletion-progress" class="progress-container hidden">
-                    <div class="progress-bar">
-                        <div id="deletion-progress-fill" class="progress-fill"></div>
-                    </div>
-                    <p id="deletion-status" class="status-text"></p>
-                </div>
-
-                <div id="deletion-log" class="log-container hidden">
-                    <h3>Deletion Log</h3>
-                    <pre id="log-content"></pre>
-                </div>
-            </div>
-
-            <div class="card" id="deletion-summary-card" style="display: none;">
-                <h2>Deletion Summary</h2>
-                <div id="deletion-summary" class="summary-container">
-                    <div class="summary-header">
-                        <div class="summary-icon success-icon">&#10003;</div>
-                        <div class="summary-title">
-                            <h3>Cleanup Complete</h3>
-                            <p id="summary-timestamp"></p>
-                        </div>
-                    </div>
-                    <div class="summary-stats">
-                        <div class="stat-card">
-                            <div class="stat-value" id="summary-versions-deleted">0</div>
-                            <div class="stat-label">Versions Deleted</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="summary-triples-deleted">0</div>
-                            <div class="stat-label">Triples Removed</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="summary-versions-kept">0</div>
-                            <div class="stat-label">Versions Kept</div>
-                        </div>
-                    </div>
-                    <div class="summary-details">
-                        <h4>Deleted Versions</h4>
-                        <div id="summary-deleted-list" class="deleted-list"></div>
-                        <h4>Preserved Versions</h4>
-                        <div id="summary-kept-list" class="kept-list"></div>
-                    </div>
-                    <div class="summary-actions">
-                        <p class="backup-notice">A backup was created and will be available for 7 days.</p>
-                        <button id="btn-view-backup" class="btn btn-secondary">View Backup</button>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Query Editor Tab -->
-        <section id="query-editor" class="tab-content">
-            <div class="card">
-                <h2>SPARQL Query Editor</h2>
-                <p class="description">Run SPARQL queries directly against your Fuseki instance. Use the templates for common operations.</p>
-
-                <div class="query-controls">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="query-graph">Graph URI:</label>
-                            <div class="input-with-dropdown">
-                                <input type="text" id="query-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
-                                <button type="button" id="btn-load-graphs" class="btn btn-small btn-secondary" title="Load available graphs from Fuseki">Browse</button>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="triplestore-type">Triplestore Type</label>
+                                <select id="triplestore-type" class="select-input">
+                                    <option value="fuseki">Apache Fuseki</option>
+                                    <option value="stardog">Stardog</option>
+                                    <option value="graphdb">GraphDB</option>
+                                </select>
                             </div>
-                            <select id="query-graph-select" class="dropdown-select hidden">
-                                <option value="">-- Select a graph --</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="query-cube-uri">Cube URI (for templates):</label>
-                            <div class="input-with-dropdown">
-                                <input type="text" id="query-cube-uri" placeholder="https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/1">
-                                <button type="button" id="btn-load-cubes" class="btn btn-small btn-secondary" title="Load available cubes from selected graph">Browse</button>
+                            <div class="form-group half">
+                                <label for="connection-mode">Connection <small>(set by mode)</small></label>
+                                <select id="connection-mode" class="select-input" disabled>
+                                    <option value="local">Local Instance</option>
+                                    <option value="remote">Remote Server</option>
+                                </select>
                             </div>
-                            <select id="query-cube-select" class="dropdown-select hidden">
-                                <option value="">-- Select a cube --</option>
-                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="endpoint-url">Endpoint URL</label>
+                            <input type="text" id="endpoint-url" value="http://localhost:3030" placeholder="http://localhost:3030">
+                            <small class="form-hint" id="endpoint-hint">Default endpoint for Apache Fuseki local instance</small>
+                        </div>
+
+                        <div class="form-row" id="dataset-row">
+                            <div class="form-group full">
+                                <label for="fuseki-dataset">Dataset Name</label>
+                                <input type="text" id="fuseki-dataset" value="lindas" placeholder="lindas">
+                            </div>
+                        </div>
+
+                        <div class="form-row hidden" id="stardog-row">
+                            <div class="form-group full">
+                                <label for="stardog-database">Database Name</label>
+                                <input type="text" id="stardog-database" value="lindas" placeholder="mydb">
+                            </div>
+                        </div>
+
+                        <div class="form-row hidden" id="graphdb-row">
+                            <div class="form-group full">
+                                <label for="graphdb-repository">Repository Name</label>
+                                <input type="text" id="graphdb-repository" value="test" placeholder="test">
+                            </div>
+                        </div>
+
+                        <div class="form-row hidden" id="auth-row">
+                            <div class="form-group half">
+                                <label for="auth-username">Username</label>
+                                <input type="text" id="auth-username" placeholder="admin">
+                            </div>
+                            <div class="form-group half">
+                                <label for="auth-password">Password</label>
+                                <input type="password" id="auth-password" placeholder="password">
+                            </div>
+                        </div>
+
+                        <div class="button-group">
+                            <button id="btn-test-connection" class="btn btn-primary">Test Connection</button>
+                            <button id="btn-create-dataset" class="btn btn-secondary">Create Dataset</button>
+                        </div>
+
+                        <div id="connection-result" class="result-box hidden"></div>
+                    </div>
+
+                    <!-- Quick Setup Cards -->
+                    <div class="quick-setup-grid">
+                        <div class="setup-card" data-setup="fuseki">
+                            <div class="setup-card-header">
+                                <span class="setup-icon">&#9670;</span>
+                                <h4>Apache Fuseki</h4>
+                            </div>
+                            <p>Free, open-source SPARQL server</p>
+                            <code>docker run -p 3030:3030 stain/jena-fuseki</code>
+                            <button class="btn btn-small btn-outline" data-preset="fuseki">Use Fuseki</button>
+                        </div>
+                        <div class="setup-card" data-setup="stardog">
+                            <div class="setup-card-header">
+                                <span class="setup-icon">&#9733;</span>
+                                <h4>Stardog</h4>
+                            </div>
+                            <p>Enterprise knowledge graph platform</p>
+                            <code>docker run -p 5820:5820 stardog/stardog</code>
+                            <button class="btn btn-small btn-outline" data-preset="stardog">Use Stardog</button>
+                        </div>
+                        <div class="setup-card" data-setup="graphdb">
+                            <div class="setup-card-header">
+                                <span class="setup-icon">&#9678;</span>
+                                <h4>GraphDB</h4>
+                            </div>
+                            <p>RDF database with reasoning</p>
+                            <code>docker run -p 7200:7200 ontotext/graphdb:free</code>
+                            <button class="btn btn-small btn-outline" data-preset="graphdb">Use GraphDB</button>
                         </div>
                     </div>
+                </section>
 
-                    <div class="form-group">
-                        <label for="query-template">Query Template:</label>
-                        <select id="query-template">
-                            <option value="custom">Custom Query</option>
-                            <optgroup label="Read Queries">
-                                <option value="list-cubes">List All Cubes</option>
-                                <option value="count-triples">Count Total Triples in Graph</option>
-                                <option value="preview-single">Preview Single Cube (Count Components)</option>
-                                <option value="preview-deletions">Preview Versions to Delete (Keep Newest 2)</option>
-                            </optgroup>
-                            <optgroup label="Write Queries (DESTRUCTIVE)">
-                                <option value="delete-single">Delete Single Cube Version</option>
-                                <option value="delete-old-versions">Delete Old Versions (Keep Newest 2)</option>
-                            </optgroup>
-                        </select>
+                <!-- Download Data Section (Offline Mode Only) -->
+                <section id="section-download" class="content-section">
+                    <div class="section-intro">
+                        <p>Download cube data from LINDAS production environments to your local triplestore.</p>
                     </div>
 
-                    <div class="form-group">
-                        <label for="query-type">Query Type:</label>
-                        <div class="radio-group">
-                            <label class="radio-label">
-                                <input type="radio" name="query-type" value="select" checked> SELECT (Read)
+                    <div class="card">
+                        <h3>Select LINDAS Environment</h3>
+
+                        <div class="environment-selector">
+                            <label class="env-option">
+                                <input type="radio" name="lindas-env" value="https://lindas.admin.ch" checked>
+                                <div class="env-card">
+                                    <span class="env-icon">&#127760;</span>
+                                    <div class="env-info">
+                                        <strong>Production (ld.admin.ch)</strong>
+                                        <span>https://lindas.admin.ch</span>
+                                    </div>
+                                    <span class="env-badge production">PROD</span>
+                                </div>
                             </label>
-                            <label class="radio-label">
-                                <input type="radio" name="query-type" value="update"> UPDATE (Write/Delete)
+                            <label class="env-option">
+                                <input type="radio" name="lindas-env" value="https://int.lindas.admin.ch">
+                                <div class="env-card">
+                                    <span class="env-icon">&#128295;</span>
+                                    <div class="env-info">
+                                        <strong>Integration (int.ld.admin.ch)</strong>
+                                        <span>https://int.lindas.admin.ch</span>
+                                    </div>
+                                    <span class="env-badge integration">INT</span>
+                                </div>
+                            </label>
+                            <label class="env-option">
+                                <input type="radio" name="lindas-env" value="https://test.lindas.admin.ch">
+                                <div class="env-card">
+                                    <span class="env-icon">&#128248;</span>
+                                    <div class="env-info">
+                                        <strong>Test (test.ld.admin.ch)</strong>
+                                        <span>https://test.lindas.admin.ch</span>
+                                    </div>
+                                    <span class="env-badge test">TEST</span>
+                                </div>
+                            </label>
+                            <label class="env-option">
+                                <input type="radio" name="lindas-env" value="custom">
+                                <div class="env-card">
+                                    <span class="env-icon">&#9998;</span>
+                                    <div class="env-info">
+                                        <strong>Custom URL</strong>
+                                        <input type="text" id="custom-lindas-url" class="inline-input" placeholder="https://your-sparql-endpoint.com/query" disabled>
+                                    </div>
+                                    <span class="env-badge custom">CUSTOM</span>
+                                </div>
                             </label>
                         </div>
                     </div>
-                </div>
 
-                <div class="form-group">
-                    <label for="query-text">SPARQL Query:</label>
-                    <textarea id="query-text" class="query-textarea" rows="20" spellcheck="false" placeholder="Enter your SPARQL query here..."></textarea>
-                </div>
+                    <div class="card">
+                        <h3>Select Graph to Download</h3>
 
-                <div class="button-group">
-                    <button id="btn-load-template" class="btn btn-secondary">Load Template</button>
-                    <button id="btn-execute-query" class="btn btn-primary">Execute Query</button>
-                    <button id="btn-clear-query" class="btn btn-secondary">Clear</button>
-                </div>
+                        <div class="form-group">
+                            <label for="download-graph-select">Available Graphs</label>
+                            <div class="input-with-button">
+                                <select id="download-graph-select" class="select-input">
+                                    <option value="">-- Click "Load Graphs" to see available graphs --</option>
+                                </select>
+                                <button id="btn-load-graphs" class="btn btn-secondary">Load Graphs</button>
+                            </div>
+                        </div>
 
-                <div id="query-status" class="query-status hidden"></div>
-            </div>
+                        <div class="form-group">
+                            <label for="download-graph-manual">Or enter graph URI manually</label>
+                            <input type="text" id="download-graph-manual" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                        </div>
 
-            <div class="card" id="query-results-card" style="display: none;">
-                <h2>Query Results</h2>
-                <div class="results-header">
-                    <span id="results-count"></span>
-                    <span id="results-time"></span>
-                </div>
-                <div id="query-results" class="query-results"></div>
-            </div>
-        </section>
-
-        <!-- Backups Tab -->
-        <section id="backups" class="tab-content">
-            <div class="card">
-                <h2>Backup Management</h2>
-                <p class="description">View and restore deleted cube versions. Backups are automatically deleted after 7 days.</p>
-
-                <button id="btn-refresh-backups" class="btn btn-primary">Refresh Backup List</button>
-
-                <div id="backup-list-container" class="table-container">
-                    <p class="placeholder-text">Click "Refresh Backup List" to see available backups</p>
-                </div>
-            </div>
-
-            <div class="card" id="restore-preview-card" style="display: none;">
-                <h2>Restore Preview</h2>
-                <p class="description">Review the backup before restoring.</p>
-
-                <div id="restore-preview-info" class="info-box"></div>
-
-                <div class="button-group">
-                    <button id="btn-restore-backup" class="btn btn-primary">Restore This Backup</button>
-                    <button id="btn-export-backup" class="btn btn-secondary">Export for External Use</button>
-                    <button id="btn-delete-backup" class="btn btn-danger">Delete Backup</button>
-                </div>
-
-                <div id="restore-progress" class="progress-container hidden">
-                    <div class="progress-bar">
-                        <div id="restore-progress-fill" class="progress-fill"></div>
+                        <div id="graph-info" class="info-box hidden"></div>
                     </div>
-                    <p id="restore-status" class="status-text"></p>
-                </div>
-            </div>
 
-            <div class="card">
-                <h2>Import Backup File</h2>
-                <p class="description">Upload a backup file (exported .lindas.json or raw .nt file) to restore data to your triplestore.</p>
+                    <div class="card">
+                        <h3>Download Options</h3>
 
-                <div class="upload-area" id="upload-area">
-                    <div class="upload-icon">&#128193;</div>
-                    <p>Drag and drop a backup file here, or click to select</p>
-                    <input type="file" id="backup-file-input" accept=".json,.nt,.ntriples" style="display: none;">
-                    <button id="btn-select-file" class="btn btn-secondary">Select File</button>
-                </div>
+                        <div class="download-options">
+                            <div class="download-option primary">
+                                <h4>Download All Cubes from Graph</h4>
+                                <p>Downloads all cube versions from the selected graph with rate limiting to prevent overloading LINDAS.</p>
+                                <button id="btn-download-all" class="btn btn-primary btn-large">Download All Cubes</button>
+                            </div>
+                            <div class="download-option">
+                                <h4>Download Sample Data</h4>
+                                <p>Quick download of sample cubes for testing (co2wirkung - 7 versions).</p>
+                                <button id="btn-download-sample" class="btn btn-secondary">Download Sample</button>
+                            </div>
+                        </div>
 
-                <div id="upload-preview" class="info-box hidden">
-                    <h3>File Preview</h3>
-                    <div id="upload-preview-info"></div>
-                    <div class="form-group">
-                        <label for="import-target-graph">Target Graph URI (optional - leave empty to use original):</label>
-                        <input type="text" id="import-target-graph" placeholder="Use original graph from metadata">
+                        <div id="download-progress" class="progress-container hidden">
+                            <div class="progress-header">
+                                <span id="download-step">Preparing...</span>
+                                <span id="download-counter">0 / 0</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div id="download-progress-fill" class="progress-fill"></div>
+                            </div>
+                            <div class="progress-details">
+                                <p id="download-status" class="status-text"></p>
+                                <p id="download-current" class="current-item"></p>
+                            </div>
+                            <div id="download-rate-limit" class="rate-limit-notice hidden">
+                                <span class="rate-icon">&#8987;</span> Rate limiting: waiting before next download...
+                            </div>
+                        </div>
+
+                        <div id="download-summary" class="summary-box hidden">
+                            <h4>Download Complete</h4>
+                            <div class="summary-stats">
+                                <div class="stat">
+                                    <span class="stat-value" id="summary-downloaded">0</span>
+                                    <span class="stat-label">Cubes Downloaded</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-value" id="summary-triples">0</span>
+                                    <span class="stat-label">Triples Added</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-value" id="summary-errors">0</span>
+                                    <span class="stat-label">Errors</span>
+                                </div>
+                            </div>
+                            <button id="btn-go-to-wizard" class="btn btn-primary">Continue to Deletion Wizard</button>
+                        </div>
                     </div>
-                    <div class="button-group">
-                        <button id="btn-import-file" class="btn btn-primary">Import to Current Triplestore</button>
-                        <button id="btn-cancel-import" class="btn btn-secondary">Cancel</button>
+                </section>
+
+                <!-- Deletion Wizard Section -->
+                <section id="section-wizard" class="content-section">
+                    <div class="section-intro">
+                        <p>Step-by-step wizard to identify and delete old cube versions while keeping the newest 2.</p>
                     </div>
-                </div>
-            </div>
-        </section>
 
-        <!-- Documentation Tab -->
-        <section id="docs" class="tab-content">
-            <div class="card">
-                <h2>How the Cleanup Process Works</h2>
-                <p class="description">This page explains the SPARQL queries and logic used to identify and delete old cube versions.</p>
-            </div>
+                    <!-- Wizard Steps Indicator -->
+                    <div class="wizard-steps">
+                        <div class="wizard-step active" data-step="1">
+                            <span class="step-number">1</span>
+                            <span class="step-label">Select Graph</span>
+                        </div>
+                        <div class="wizard-step" data-step="2">
+                            <span class="step-number">2</span>
+                            <span class="step-label">Explore Cubes</span>
+                        </div>
+                        <div class="wizard-step" data-step="3">
+                            <span class="step-number">3</span>
+                            <span class="step-label">Preview Deletions</span>
+                        </div>
+                        <div class="wizard-step" data-step="4">
+                            <span class="step-number">4</span>
+                            <span class="step-label">Execute Cleanup</span>
+                        </div>
+                        <div class="wizard-step" data-step="5">
+                            <span class="step-number">5</span>
+                            <span class="step-label">Summary</span>
+                        </div>
+                    </div>
 
-            <div class="card">
-                <h2>Step 1: Version Detection</h2>
-                <div class="doc-section">
-                    <h3>Understanding Cube URIs</h3>
-                    <p>LINDAS cubes follow a versioned URI pattern:</p>
-                    <pre class="code-block">https://energy.ld.admin.ch/sfoe/{cube_name}/{version_number}</pre>
-                    <p>For example:</p>
-                    <ul class="doc-list">
-                        <li><code>...bfe_ogd18_gebaeudeprogramm_co2wirkung/7</code> - Version 7</li>
-                        <li><code>...bfe_ogd18_gebaeudeprogramm_co2wirkung/1</code> - Version 1</li>
-                    </ul>
+                    <!-- Wizard Step Contents -->
+                    <div class="wizard-content">
+                        <!-- Step 1: Select Graph -->
+                        <div class="wizard-panel active" id="wizard-step-1">
+                            <div class="card">
+                                <h3>Step 1: Select Graph to Clean</h3>
+                                <p class="description">Choose the graph containing cube data to analyze.</p>
 
-                    <h3>Version Extraction Query</h3>
-                    <p>The system extracts version numbers using regex pattern matching:</p>
-                    <pre class="code-block sparql">BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?version)
+                                <div class="form-group">
+                                    <label for="wizard-graph">Graph URI</label>
+                                    <input type="text" id="wizard-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                                </div>
+
+                                <div class="button-group">
+                                    <button id="btn-wizard-load-graph" class="btn btn-primary">Load Graph</button>
+                                </div>
+
+                                <div id="wizard-graph-info" class="info-box hidden"></div>
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Explore Cubes -->
+                        <div class="wizard-panel" id="wizard-step-2">
+                            <div class="card">
+                                <h3>Step 2: Explore Cube Versions</h3>
+                                <p class="description">View all cubes and their versions in the selected graph.</p>
+
+                                <div id="wizard-cubes-summary" class="stats-grid"></div>
+
+                                <div id="wizard-multi-version" class="table-container">
+                                    <h4>Cubes with Multiple Versions (Cleanup Candidates)</h4>
+                                    <div id="multi-version-table"></div>
+                                </div>
+
+                                <div id="wizard-all-versions" class="table-container collapsed">
+                                    <h4>All Cube Versions <button class="btn btn-small btn-outline toggle-btn">Show All</button></h4>
+                                    <div id="all-versions-table"></div>
+                                </div>
+
+                                <div class="button-group">
+                                    <button id="btn-wizard-back-1" class="btn btn-secondary">Back</button>
+                                    <button id="btn-wizard-next-2" class="btn btn-primary">Continue to Preview</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Preview Deletions -->
+                        <div class="wizard-panel" id="wizard-step-3">
+                            <div class="card">
+                                <h3>Step 3: Preview Deletions</h3>
+                                <p class="description">Review which versions will be deleted (keeping newest 2 per cube).</p>
+
+                                <div id="wizard-deletion-preview" class="deletion-preview">
+                                    <div class="preview-legend">
+                                        <span class="legend-item keep"><span class="badge badge-keep">KEEP</span> Newest 2 versions</span>
+                                        <span class="legend-item delete"><span class="badge badge-delete">DELETE</span> Older versions</span>
+                                    </div>
+                                    <div id="deletion-preview-table"></div>
+                                </div>
+
+                                <div id="wizard-deletion-stats" class="stats-grid"></div>
+
+                                <div class="button-group">
+                                    <button id="btn-wizard-back-2" class="btn btn-secondary">Back</button>
+                                    <button id="btn-wizard-next-3" class="btn btn-danger">Proceed to Deletion</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 4: Execute Cleanup -->
+                        <div class="wizard-panel" id="wizard-step-4">
+                            <div class="card">
+                                <h3>Step 4: Execute Cleanup</h3>
+
+                                <div class="warning-banner">
+                                    <span class="warning-icon">&#9888;</span>
+                                    <div class="warning-content">
+                                        <strong>Warning: This action cannot be undone!</strong>
+                                        <p>A backup will be created before deletion, but please make sure you have verified the deletion preview.</p>
+                                    </div>
+                                </div>
+
+                                <div id="wizard-deletion-queue" class="deletion-queue">
+                                    <h4>Cubes to Delete</h4>
+                                    <div id="deletion-queue-list"></div>
+                                </div>
+
+                                <div class="form-group checkbox-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="confirm-deletion">
+                                        <span>I understand that this will permanently delete the selected cube versions</span>
+                                    </label>
+                                </div>
+
+                                <div class="button-group">
+                                    <button id="btn-wizard-back-3" class="btn btn-secondary">Back</button>
+                                    <button id="btn-execute-deletion" class="btn btn-danger" disabled>Execute Deletion</button>
+                                </div>
+
+                                <div id="deletion-progress" class="progress-container hidden">
+                                    <div class="progress-header">
+                                        <span id="deletion-step">Preparing...</span>
+                                        <span id="deletion-counter">0 / 0</span>
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div id="deletion-progress-fill" class="progress-fill"></div>
+                                    </div>
+                                    <p id="deletion-status" class="status-text"></p>
+                                </div>
+
+                                <div id="deletion-log" class="log-container hidden">
+                                    <h4>Deletion Log</h4>
+                                    <pre id="log-content"></pre>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 5: Summary -->
+                        <div class="wizard-panel" id="wizard-step-5">
+                            <div class="card">
+                                <h3>Step 5: Cleanup Summary</h3>
+
+                                <div class="summary-header success">
+                                    <span class="summary-icon">&#10003;</span>
+                                    <div>
+                                        <h4>Cleanup Complete!</h4>
+                                        <p id="summary-timestamp"></p>
+                                    </div>
+                                </div>
+
+                                <div id="wizard-summary-stats" class="stats-grid"></div>
+
+                                <div id="wizard-summary-details" class="summary-details">
+                                    <div class="detail-section">
+                                        <h4>Deleted Versions</h4>
+                                        <div id="summary-deleted-list"></div>
+                                    </div>
+                                    <div class="detail-section">
+                                        <h4>Preserved Versions</h4>
+                                        <div id="summary-kept-list"></div>
+                                    </div>
+                                </div>
+
+                                <div class="backup-notice">
+                                    <span class="notice-icon">&#128451;</span>
+                                    <p>Backups have been created and will be available for 7 days. <a href="#" id="view-backups-link">View Backups</a></p>
+                                </div>
+
+                                <div class="button-group">
+                                    <button id="btn-wizard-restart" class="btn btn-primary">Start New Cleanup</button>
+                                    <button id="btn-wizard-export-report" class="btn btn-secondary">Export Report</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Query Editor Section -->
+                <section id="section-query-editor" class="content-section">
+                    <div class="section-intro">
+                        <p>Execute SPARQL queries directly against your triplestore.</p>
+                    </div>
+
+                    <div class="card">
+                        <h3>Query Configuration</h3>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="query-graph-uri">Graph URI</label>
+                                <div class="input-with-button">
+                                    <input type="text" id="query-graph-uri" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                                    <button id="btn-browse-graphs" class="btn btn-secondary btn-small">Browse</button>
+                                </div>
+                                <select id="query-graph-dropdown" class="dropdown-select hidden">
+                                    <option value="">-- Select a graph --</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="query-cube-uri">Cube URI (for templates)</label>
+                                <div class="input-with-button">
+                                    <input type="text" id="query-cube-uri" placeholder="Optional: for cube-specific templates">
+                                    <button id="btn-browse-cubes" class="btn btn-secondary btn-small">Browse</button>
+                                </div>
+                                <select id="query-cube-dropdown" class="dropdown-select hidden">
+                                    <option value="">-- Select a cube --</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="query-template">Query Template</label>
+                            <select id="query-template" class="select-input">
+                                <option value="custom">Custom Query</option>
+                                <optgroup label="Read Queries">
+                                    <option value="list-cubes">List All Cubes</option>
+                                    <option value="count-triples">Count Total Triples</option>
+                                    <option value="preview-single">Preview Single Cube</option>
+                                    <option value="preview-deletions">Preview Versions to Delete</option>
+                                </optgroup>
+                                <optgroup label="Orphan Detection">
+                                    <option value="find-orphans-summary">Find All Orphans - Summary</option>
+                                    <option value="find-orphan-observations">Find Orphan Observations</option>
+                                    <option value="find-orphan-sets">Find Orphan Observation Sets</option>
+                                </optgroup>
+                                <optgroup label="Write Queries (DESTRUCTIVE)">
+                                    <option value="delete-single">Delete Single Cube Version</option>
+                                    <option value="delete-old-versions">Delete Old Versions (Keep Newest 2)</option>
+                                    <option value="delete-orphans">Delete All Orphans</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="query-type-radio">Query Type</label>
+                            <div class="radio-group">
+                                <label class="radio-label">
+                                    <input type="radio" name="query-type" value="select" checked>
+                                    <span>SELECT (Read)</span>
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="query-type" value="update">
+                                    <span>UPDATE (Write/Delete)</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3>SPARQL Query</h3>
+
+                        <textarea id="query-text" class="query-textarea" rows="15" spellcheck="false" placeholder="Enter your SPARQL query here..."></textarea>
+
+                        <div class="button-group">
+                            <button id="btn-load-template" class="btn btn-secondary">Load Template</button>
+                            <button id="btn-execute-query" class="btn btn-primary">Execute Query</button>
+                            <button id="btn-clear-query" class="btn btn-outline">Clear</button>
+                        </div>
+
+                        <div id="query-status" class="status-box hidden"></div>
+                    </div>
+
+                    <div class="card" id="query-results-card" style="display: none;">
+                        <h3>Query Results</h3>
+                        <div class="results-header">
+                            <span id="results-count"></span>
+                            <span id="results-time"></span>
+                        </div>
+                        <div id="query-results" class="query-results"></div>
+                    </div>
+                </section>
+
+                <!-- Backups Section -->
+                <section id="section-backups" class="content-section">
+                    <div class="section-intro">
+                        <p>Manage backups of deleted cube versions. Backups are automatically deleted after 7 days.</p>
+                    </div>
+
+                    <div class="card">
+                        <h3>Available Backups</h3>
+
+                        <button id="btn-refresh-backups" class="btn btn-primary">Refresh Backup List</button>
+
+                        <div id="backup-list" class="table-container">
+                            <p class="placeholder-text">Click "Refresh Backup List" to see available backups</p>
+                        </div>
+                    </div>
+
+                    <div class="card" id="backup-preview-card" style="display: none;">
+                        <h3>Backup Details</h3>
+
+                        <div id="backup-preview-info" class="info-box"></div>
+
+                        <div class="form-group">
+                            <label for="restore-target-graph">Target Graph (optional)</label>
+                            <input type="text" id="restore-target-graph" placeholder="Leave empty to use original graph">
+                        </div>
+
+                        <div class="button-group">
+                            <button id="btn-restore-backup" class="btn btn-primary">Restore Backup</button>
+                            <button id="btn-export-backup" class="btn btn-secondary">Export as File</button>
+                            <button id="btn-delete-backup" class="btn btn-danger">Delete Backup</button>
+                        </div>
+
+                        <div id="restore-progress" class="progress-container hidden">
+                            <div class="progress-bar">
+                                <div id="restore-progress-fill" class="progress-fill"></div>
+                            </div>
+                            <p id="restore-status" class="status-text"></p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3>Import Backup File</h3>
+                        <p class="description">Upload a backup file (.lindas.json or .nt) to restore data.</p>
+
+                        <div class="upload-area" id="backup-upload-area">
+                            <div class="upload-icon">&#128451;</div>
+                            <p>Drag and drop a backup file here, or click to select</p>
+                            <input type="file" id="backup-file-input" accept=".json,.nt,.ntriples" style="display: none;">
+                            <button id="btn-select-backup-file" class="btn btn-secondary">Select File</button>
+                        </div>
+
+                        <div id="upload-preview" class="info-box hidden">
+                            <h4>File Preview</h4>
+                            <div id="upload-preview-info"></div>
+                            <div class="form-group">
+                                <label for="import-target-graph">Target Graph (optional)</label>
+                                <input type="text" id="import-target-graph" placeholder="Leave empty to use graph from metadata">
+                            </div>
+                            <div class="button-group">
+                                <button id="btn-import-backup" class="btn btn-primary">Import to Triplestore</button>
+                                <button id="btn-cancel-import" class="btn btn-secondary">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Documentation Section -->
+                <section id="section-documentation" class="content-section">
+                    <div class="section-intro">
+                        <p>Learn how the cleanup process works and understand the SPARQL queries used.</p>
+                    </div>
+
+                    <div class="doc-nav">
+                        <button class="doc-nav-btn active" data-doc="overview">Overview</button>
+                        <button class="doc-nav-btn" data-doc="version-detection">Version Detection</button>
+                        <button class="doc-nav-btn" data-doc="ranking">Ranking Algorithm</button>
+                        <button class="doc-nav-btn" data-doc="deletion">Deletion Process</button>
+                        <button class="doc-nav-btn" data-doc="backup">Backup & Restore</button>
+                    </div>
+
+                    <div class="doc-content">
+                        <div class="doc-panel active" id="doc-overview">
+                            <div class="card">
+                                <h3>How LINDAS Cube Manager Works</h3>
+
+                                <p>LINDAS Cube Manager is a tool for managing SPARQL triplestore data, specifically designed to clean up old cube versions from LINDAS (Linked Data Service) while preserving the newest 2 versions of each cube.</p>
+
+                                <h4>Key Features</h4>
+                                <ul class="doc-list">
+                                    <li><strong>Offline Mode:</strong> Download data from LINDAS to a local triplestore and work safely without affecting production.</li>
+                                    <li><strong>Online Mode:</strong> Connect directly to remote triplestores (use with caution on production).</li>
+                                    <li><strong>Deletion Wizard:</strong> Step-by-step workflow to identify and delete old versions.</li>
+                                    <li><strong>Query Editor:</strong> Execute custom SPARQL queries with templates.</li>
+                                    <li><strong>Automatic Backups:</strong> All deletions create backups that are kept for 7 days.</li>
+                                </ul>
+
+                                <h4>Workflow Overview</h4>
+                                <div class="workflow-diagram">
+                                    <div class="workflow-step">
+                                        <span class="step-num">1</span>
+                                        <span class="step-text">Connect to Triplestore</span>
+                                    </div>
+                                    <span class="workflow-arrow">&#8594;</span>
+                                    <div class="workflow-step">
+                                        <span class="step-num">2</span>
+                                        <span class="step-text">Download Data (Offline)</span>
+                                    </div>
+                                    <span class="workflow-arrow">&#8594;</span>
+                                    <div class="workflow-step">
+                                        <span class="step-num">3</span>
+                                        <span class="step-text">Run Deletion Wizard</span>
+                                    </div>
+                                    <span class="workflow-arrow">&#8594;</span>
+                                    <div class="workflow-step">
+                                        <span class="step-num">4</span>
+                                        <span class="step-text">Verify & Export</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <h3>Cube URI Structure</h3>
+
+                                <p>LINDAS cubes follow a versioned URI pattern:</p>
+                                <pre class="code-block">https://energy.ld.admin.ch/sfoe/{cube_name}/{version_number}</pre>
+
+                                <p>Example:</p>
+                                <ul class="doc-list">
+                                    <li><code>https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/7</code> - Version 7</li>
+                                    <li><code>https://energy.ld.admin.ch/sfoe/bfe_ogd18_gebaeudeprogramm_co2wirkung/1</code> - Version 1</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="doc-panel" id="doc-version-detection">
+                            <div class="card">
+                                <h3>Version Detection</h3>
+
+                                <p>The system extracts version numbers using SPARQL regex pattern matching:</p>
+
+                                <pre class="code-block sparql">BIND(REPLACE(STR(?cube), "^.*/([^/]+)/([0-9]+)$", "$2") AS ?version)
 BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+$", "$1") AS ?baseCube)</pre>
-                    <p><strong>Logic:</strong> The regex captures the numeric suffix as the version and everything before it as the base cube identifier.</p>
-                </div>
-            </div>
 
-            <div class="card">
-                <h2>Step 2: Version Counting</h2>
-                <div class="doc-section">
-                    <h3>Grouping by Base Cube</h3>
-                    <p>All cube versions are grouped by their base URI to count how many versions exist:</p>
-                    <pre class="code-block sparql">SELECT ?baseCube (COUNT(DISTINCT ?cube) AS ?versionCount)
+                                <h4>How it Works</h4>
+                                <ol class="doc-list numbered">
+                                    <li>The regex <code>^.*/([0-9]+)/?$</code> captures the numeric suffix as the version</li>
+                                    <li>Everything before the version number is extracted as the base cube identifier</li>
+                                    <li>Cubes are then grouped by their base URI</li>
+                                </ol>
+
+                                <h4>Query: List All Versions</h4>
+                                <pre class="code-block sparql">PREFIX cube: &lt;https://cube.link/&gt;
+PREFIX xsd: &lt;http://www.w3.org/2001/XMLSchema#&gt;
+
+SELECT ?baseCube ?cube ?version
 WHERE {
-  ?cube a cube:Cube .
-  # ... version extraction ...
-}
-GROUP BY ?baseCube
-HAVING (COUNT(DISTINCT ?cube) > 2)</pre>
-                    <p><strong>Logic:</strong> The <code>HAVING</code> clause filters to show only cubes with more than 2 versions (cleanup candidates).</p>
-
-                    <div class="example-box">
-                        <h4>Example Result</h4>
-                        <table class="doc-table">
-                            <tr><th>Base Cube</th><th>Version Count</th><th>Action</th></tr>
-                            <tr><td>co2wirkung</td><td>7</td><td>Needs cleanup</td></tr>
-                            <tr><td>other_cube</td><td>2</td><td>OK (not shown)</td></tr>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Step 3: Ranking Algorithm</h2>
-                <div class="doc-section">
-                    <h3>How Versions Are Ranked</h3>
-                    <p>The core algorithm determines which versions to keep or delete:</p>
-                    <pre class="code-block">Rank = (Number of newer versions) + 1</pre>
-
-                    <div class="ranking-visual">
-                        <h4>Ranking Example (7 versions)</h4>
-                        <table class="doc-table ranking-table">
-                            <tr><th>Version</th><th>Newer Versions</th><th>Rank</th><th>Action</th></tr>
-                            <tr class="keep-row"><td>7</td><td>0</td><td>1</td><td class="action-keep">KEEP</td></tr>
-                            <tr class="keep-row"><td>6</td><td>1 (v7)</td><td>2</td><td class="action-keep">KEEP</td></tr>
-                            <tr class="delete-row"><td>5</td><td>2 (v6, v7)</td><td>3</td><td class="action-delete">DELETE</td></tr>
-                            <tr class="delete-row"><td>4</td><td>3</td><td>4</td><td class="action-delete">DELETE</td></tr>
-                            <tr class="delete-row"><td>3</td><td>4</td><td>5</td><td class="action-delete">DELETE</td></tr>
-                            <tr class="delete-row"><td>2</td><td>5</td><td>6</td><td class="action-delete">DELETE</td></tr>
-                            <tr class="delete-row"><td>1</td><td>6</td><td>7</td><td class="action-delete">DELETE</td></tr>
-                        </table>
-                    </div>
-
-                    <h3>SPARQL Implementation</h3>
-                    <pre class="code-block sparql">SELECT ?cube ?version (COUNT(?newerCube) + 1 AS ?rank)
-WHERE {
-  ?cube a cube:Cube .
-  OPTIONAL {
-    ?newerCube a cube:Cube .
-    FILTER(?newerBaseCube = ?baseCube && ?newerVersion > ?version)
+  GRAPH &lt;GRAPH_URI&gt; {
+    ?cube a cube:Cube .
+    BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube)
+    BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?version)
   }
 }
-GROUP BY ?cube ?version
-HAVING ((COUNT(?newerCube) + 1) > 2)  -- Only return DELETE candidates</pre>
-                    <p><strong>Logic:</strong> For each cube, count how many other cubes of the same base have a higher version number. Add 1 to get the rank. Versions with rank > 2 are marked for deletion.</p>
-                </div>
-            </div>
+ORDER BY ?baseCube DESC(?version)</pre>
+                            </div>
+                        </div>
 
-            <div class="card">
-                <h2>Step 4: Deletion Process</h2>
-                <div class="doc-section">
-                    <h3>Cube Structure</h3>
-                    <p>A cube consists of multiple components that must all be deleted:</p>
-                    <div class="structure-diagram">
-                        <pre class="code-block">cube:Cube
+                        <div class="doc-panel" id="doc-ranking">
+                            <div class="card">
+                                <h3>Ranking Algorithm</h3>
+
+                                <p>The core algorithm determines which versions to keep or delete:</p>
+
+                                <pre class="code-block">Rank = (Number of newer versions) + 1
+
+Rank 1-2: KEEP (newest two versions)
+Rank 3+:  DELETE (older versions)</pre>
+
+                                <h4>Example with 7 Versions</h4>
+                                <table class="doc-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Version</th>
+                                            <th>Newer Versions</th>
+                                            <th>Rank</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="keep-row">
+                                            <td>7</td>
+                                            <td>0</td>
+                                            <td>1</td>
+                                            <td class="action-keep">KEEP</td>
+                                        </tr>
+                                        <tr class="keep-row">
+                                            <td>6</td>
+                                            <td>1 (v7)</td>
+                                            <td>2</td>
+                                            <td class="action-keep">KEEP</td>
+                                        </tr>
+                                        <tr class="delete-row">
+                                            <td>5</td>
+                                            <td>2 (v6, v7)</td>
+                                            <td>3</td>
+                                            <td class="action-delete">DELETE</td>
+                                        </tr>
+                                        <tr class="delete-row">
+                                            <td>4</td>
+                                            <td>3</td>
+                                            <td>4</td>
+                                            <td class="action-delete">DELETE</td>
+                                        </tr>
+                                        <tr class="delete-row">
+                                            <td>3</td>
+                                            <td>4</td>
+                                            <td>5</td>
+                                            <td class="action-delete">DELETE</td>
+                                        </tr>
+                                        <tr class="delete-row">
+                                            <td>2</td>
+                                            <td>5</td>
+                                            <td>6</td>
+                                            <td class="action-delete">DELETE</td>
+                                        </tr>
+                                        <tr class="delete-row">
+                                            <td>1</td>
+                                            <td>6</td>
+                                            <td>7</td>
+                                            <td class="action-delete">DELETE</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="doc-panel" id="doc-deletion">
+                            <div class="card">
+                                <h3>Deletion Process</h3>
+
+                                <h4>Cube Structure</h4>
+                                <p>A cube consists of multiple components that must all be deleted:</p>
+
+                                <pre class="code-block">cube:Cube
   +-- Metadata (title, dates, creator)
   |     +-- Blank nodes (nested properties)
   |
@@ -712,359 +880,360 @@ HAVING ((COUNT(?newerCube) + 1) > 2)  -- Only return DELETE candidates</pre>
   |
   +-- cube:observationSet --> Observation container
         +-- cube:observation --> Data points (many)</pre>
-                    </div>
 
-                    <h3>Three-Step Chunked Deletion</h3>
-                    <p>To avoid timeouts with large cubes, deletion is performed in three steps:</p>
+                                <h4>Three-Step Deletion</h4>
+                                <p>To avoid timeouts with large cubes, deletion is performed in three steps:</p>
 
-                    <div class="deletion-steps">
-                        <div class="deletion-step">
-                            <div class="step-badge">1</div>
-                            <div class="step-detail">
-                                <h4>Delete Observations</h4>
-                                <p>Remove observation data in chunks of 50,000 triples. Repeat until all observations are deleted.</p>
-                                <pre class="code-block sparql">DELETE { ?obs ?p ?o }
-WHERE {
-  &lt;cubeUri&gt; cube:observationSet/cube:observation ?obs .
-  ?obs ?p ?o .
-} LIMIT 50000</pre>
+                                <div class="deletion-steps">
+                                    <div class="deletion-step">
+                                        <span class="step-badge">1</span>
+                                        <div class="step-detail">
+                                            <h5>Delete Observations</h5>
+                                            <p>Remove observation data points (the bulk of the triples)</p>
+                                        </div>
+                                    </div>
+                                    <div class="deletion-step">
+                                        <span class="step-badge">2</span>
+                                        <div class="step-detail">
+                                            <h5>Delete Observation Links</h5>
+                                            <p>Remove the cube:observation property connections</p>
+                                        </div>
+                                    </div>
+                                    <div class="deletion-step">
+                                        <span class="step-badge">3</span>
+                                        <div class="step-detail">
+                                            <h5>Delete Metadata and Shapes</h5>
+                                            <p>Remove cube metadata, SHACL shapes, and observation set container</p>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="deletion-step">
-                            <div class="step-badge">2</div>
-                            <div class="step-detail">
-                                <h4>Delete Observation Links</h4>
-                                <p>Remove the <code>cube:observation</code> property connections.</p>
-                                <pre class="code-block sparql">DELETE { ?set cube:observation ?obs }
-WHERE {
-  &lt;cubeUri&gt; cube:observationSet ?set .
-  ?set cube:observation ?obs .
+                        <div class="doc-panel" id="doc-backup">
+                            <div class="card">
+                                <h3>Backup & Restore</h3>
+
+                                <h4>Automatic Backup</h4>
+                                <p>Before any deletion, the system automatically:</p>
+                                <ol class="doc-list numbered">
+                                    <li>Exports all triples for the cube using a CONSTRUCT query</li>
+                                    <li>Saves as N-Triples file with timestamp</li>
+                                    <li>Stores metadata (cube URI, graph, deletion date)</li>
+                                </ol>
+
+                                <h4>Export Package Format (v2.0)</h4>
+                                <p>Exported backups include comprehensive metadata for easy restoration:</p>
+                                <pre class="code-block">{
+  "packageVersion": "2.0",
+  "exportedAt": "2026-01-12T...",
+  "source": { "endpoint": "...", "type": "fuseki" },
+  "cube": { "uri": "...", "version": 7, "graphUri": "..." },
+  "restore": { "targetGraph": "...", "instructions": [...] },
+  "stats": { "tripleCount": 12345 },
+  "data": "... N-Triples content ..."
 }</pre>
+
+                                <h4>Retention Policy</h4>
+                                <p>Backups are automatically deleted after <strong>7 days</strong> to manage storage.</p>
                             </div>
                         </div>
-
-                        <div class="deletion-step">
-                            <div class="step-badge">3</div>
-                            <div class="step-detail">
-                                <h4>Delete Metadata and Shapes</h4>
-                                <p>Remove cube metadata, SHACL shapes, and the observation set container.</p>
-                                <pre class="code-block sparql">DELETE { ?s ?p ?o }
-WHERE {
-  { &lt;cubeUri&gt; ?p ?o . BIND(&lt;cubeUri&gt; AS ?s) }
-  UNION
-  { &lt;cubeUri&gt; cube:observationConstraint ?shape . ?shape ?p ?o . BIND(?shape AS ?s) }
-  UNION
-  { ... property shapes, blank nodes, etc. }
-}</pre>
-                            </div>
-                        </div>
                     </div>
-                </div>
-            </div>
+                </section>
 
-            <div class="card">
-                <h2>Step 5: Backup and Rollback</h2>
-                <div class="doc-section">
-                    <h3>Automatic Backup</h3>
-                    <p>Before deletion, the system automatically creates a backup:</p>
-                    <ol class="doc-list numbered">
-                        <li>Export all triples for the cube using a CONSTRUCT query</li>
-                        <li>Save as N-Triples file with timestamp</li>
-                        <li>Store metadata (cube URI, graph, deletion date)</li>
-                    </ol>
-
-                    <h3>Restore Process</h3>
-                    <p>To restore a deleted cube:</p>
-                    <ol class="doc-list numbered">
-                        <li>Load the backup N-Triples file</li>
-                        <li>Re-import into the original graph</li>
-                        <li>Verify restoration with a count query</li>
-                    </ol>
-
-                    <h3>Retention Policy</h3>
-                    <p>Backups are automatically deleted after <strong>7 days</strong> to manage storage.</p>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Query Flow Diagram</h2>
-                <div class="doc-section">
-                    <div class="flow-diagram">
-                        <div class="flow-step">
-                            <div class="flow-box">List All Versions<br><small>Query 01</small></div>
-                            <div class="flow-arrow">&#8595;</div>
-                        </div>
-                        <div class="flow-step">
-                            <div class="flow-box">Count Per Cube<br><small>Query 02</small></div>
-                            <div class="flow-arrow">&#8595;</div>
-                        </div>
-                        <div class="flow-step">
-                            <div class="flow-box">Rank & Identify<br><small>Query 03</small></div>
-                            <div class="flow-arrow">&#8595;</div>
-                        </div>
-                        <div class="flow-step flow-branch">
-                            <div class="flow-box-left">Create Backup<br><small>CONSTRUCT</small></div>
-                            <div class="flow-box-right">Preview Triples<br><small>COUNT</small></div>
-                        </div>
-                        <div class="flow-step">
-                            <div class="flow-arrow">&#8595;</div>
-                            <div class="flow-box danger">Execute Deletion<br><small>3-Step DELETE</small></div>
-                            <div class="flow-arrow">&#8595;</div>
-                        </div>
-                        <div class="flow-step">
-                            <div class="flow-box success">Verify & Summary</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Query Editor Templates</h2>
-                <div class="doc-section">
-                    <p>The Query Editor provides pre-built SPARQL templates for common operations. Below is a detailed explanation of the logic behind each template.</p>
-
-                    <h3>1. List All Cubes</h3>
-                    <p><strong>Purpose:</strong> Shows all cubes with version numbers, grouped by base cube.</p>
-                    <p><strong>Query Logic:</strong></p>
-                    <ul class="doc-list">
-                        <li>Finds all resources with <code>rdf:type cube:Cube</code></li>
-                        <li>Extracts version number from URI using regex: <code>REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")</code></li>
-                        <li>Extracts base cube URI by removing the version suffix</li>
-                        <li>Retrieves optional metadata (title, dateCreated)</li>
-                    </ul>
-                    <pre class="code-block sparql"># Version extraction example:
-# Input:  https://energy.ld.admin.ch/sfoe/cube_name/7
-# Output: version = 7, baseCube = https://energy.ld.admin.ch/sfoe/cube_name</pre>
-
-                    <h3>2. Count Total Triples</h3>
-                    <p><strong>Purpose:</strong> Returns the total number of triples in the graph.</p>
-                    <p><strong>Query Logic:</strong></p>
-                    <ul class="doc-list">
-                        <li>Simple COUNT(*) aggregation over all triples in the named graph</li>
-                        <li>Use before/after deletion to verify how many triples were removed</li>
-                    </ul>
-                    <pre class="code-block sparql">SELECT (COUNT(*) AS ?tripleCount)
-WHERE { GRAPH &lt;graphUri&gt; { ?s ?p ?o } }</pre>
-
-                    <h3>3. Preview Single Cube (Count Components)</h3>
-                    <p><strong>Purpose:</strong> Counts the components of a specific cube before deletion.</p>
-                    <p><strong>Query Logic:</strong></p>
-                    <ul class="doc-list">
-                        <li>Counts SHACL shapes via <code>cube:observationConstraint</code></li>
-                        <li>Counts shape properties via <code>sh:property</code> path</li>
-                        <li>Counts observation sets via <code>cube:observationSet</code></li>
-                        <li>Counts individual observations via <code>cube:observation</code></li>
-                    </ul>
-                    <pre class="code-block sparql"># Component paths:
-?cube cube:observationConstraint ?shape        # SHACL shape
-?cube cube:observationConstraint/sh:property   # Properties
-?cube cube:observationSet ?obsSet              # Observation container
-?cube cube:observationSet/cube:observation     # Data points</pre>
-
-                    <h3>4. Preview Versions to Delete (Keep Newest 2)</h3>
-                    <p><strong>Purpose:</strong> Shows all versions ranked, marking which will be KEPT or DELETED.</p>
-                    <p><strong>Query Logic:</strong></p>
-                    <ul class="doc-list">
-                        <li>For each cube, count how many versions have a HIGHER version number</li>
-                        <li>Rank = count of newer versions + 1 (so newest = rank 1)</li>
-                        <li>Rank 1-2 = KEEP, Rank 3+ = DELETE</li>
-                    </ul>
-                    <pre class="code-block sparql"># Ranking subquery logic:
-SELECT ?cube (COUNT(?newerCube) + 1 AS ?rank)
-WHERE {
-  ?cube a cube:Cube .
-  OPTIONAL {
-    ?newerCube a cube:Cube .
-    FILTER(sameBaseCube && newerVersion > thisVersion)
-  }
-}
-GROUP BY ?cube
-
-# Result: IF(?rank <= 2, "KEEP", "DELETE")</pre>
-
-                    <h3>5. Delete Single Cube Version</h3>
-                    <p><strong>Purpose:</strong> Completely removes one cube version and all its data.</p>
-                    <p><strong>Query Logic:</strong></p>
-                    <ul class="doc-list">
-                        <li>Uses UNION pattern to match all cube components</li>
-                        <li>Deletes cube metadata and blank node properties</li>
-                        <li>Deletes SHACL shapes and property definitions</li>
-                        <li>Deletes observation set container</li>
-                        <li>Deletes all individual observations</li>
-                    </ul>
-                    <pre class="code-block sparql"># Delete pattern structure:
-DELETE { ... all matched triples ... }
-WHERE {
-  { ?cube ?p ?metadata }           # Cube metadata
-  UNION
-  { ?cube cube:observationConstraint ?shape. ?shape ?p ?o }  # Shapes
-  UNION
-  { ?cube cube:observationSet ?set. ?set ?p ?o }            # Obs set
-  UNION
-  { ?set cube:observation ?obs. ?obs ?p ?o }                # Observations
-}</pre>
-
-                    <h3>6. Delete All Old Versions (Keep Newest 2)</h3>
-                    <p><strong>Purpose:</strong> Automatically finds and deletes ALL cube versions older than the newest 2 per base cube.</p>
-                    <p><strong>Query Logic:</strong></p>
-                    <ul class="doc-list">
-                        <li><strong>Auto-detection:</strong> No Cube URI required - automatically finds all cubes to delete</li>
-                        <li>Uses FILTER EXISTS to find cubes with at least 2 newer versions (rank > 2)</li>
-                        <li>Extracts version numbers from URI pattern <code>/baseCube/version</code></li>
-                        <li>Deletes all components (metadata, shapes, properties, observations) for matched cubes</li>
-                        <li><strong>Warning:</strong> This is a powerful batch operation - always run the preview first!</li>
-                    </ul>
-                    <pre class="code-block sparql"># Auto-detect and delete logic:
-DELETE { ... cube components ... }
-WHERE {
-  ?cube a cube:Cube .
-  # Extract version and base cube from URI
-  BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?v)
-  BIND(REPLACE(STR(?cube), "^(.*)/[0-9]+/?$", "$1") AS ?baseStr)
-
-  # Only delete if at least 2 newer versions exist (rank > 2)
-  FILTER EXISTS {
-    ?newer1 a cube:Cube . # First newer version
-    ?newer2 a cube:Cube . # Second newer version (different from first)
-    FILTER(?newer1 != ?newer2)
-    # Both from same base cube with higher version numbers
-  }
-  # Then match all components of those cubes
-  { ?cube ... component patterns ... }
-}</pre>
-
-                    <h3>7. Orphan Detection and Cleanup</h3>
-                    <p><strong>Purpose:</strong> Find and delete orphan objects that have become disconnected from their parent cubes.</p>
-                    <p><strong>What are Orphans?</strong></p>
-                    <p>Orphans are RDF objects that were once part of a cube structure but have become disconnected, typically due to:</p>
-                    <ul class="doc-list">
-                        <li>Incomplete cube deletion (observations deleted but not their parent set)</li>
-                        <li>Failed or interrupted delete operations</li>
-                        <li>Manual data modifications that broke links</li>
-                        <li>Import errors or duplicate data</li>
-                    </ul>
-
-                    <p><strong>Types of Orphans:</strong></p>
-                    <ul class="doc-list">
-                        <li><strong>Orphan Observations:</strong> Observations not linked from any <code>cube:observationSet</code></li>
-                        <li><strong>Orphan Observation Sets:</strong> Observation sets not linked from any <code>cube:Cube</code></li>
-                        <li><strong>Orphan NodeShapes:</strong> SHACL shapes not linked via <code>cube:observationConstraint</code></li>
-                        <li><strong>Orphan PropertyShapes:</strong> Property shapes not linked via <code>sh:property</code></li>
-                    </ul>
-
-                    <p><strong>Available Queries:</strong></p>
-                    <ul class="doc-list">
-                        <li><strong>Find All Orphans - Summary:</strong> Get a count of all orphan types</li>
-                        <li><strong>Find Orphan Observations:</strong> List orphan observations with triple counts</li>
-                        <li><strong>Find Orphan Observation Sets:</strong> List orphan sets with observation counts</li>
-                        <li><strong>Find Orphan SHACL Shapes:</strong> List disconnected shapes</li>
-                        <li><strong>Delete Orphan Observation Sets:</strong> Remove orphan sets and their observations</li>
-                        <li><strong>Delete Orphan SHACL Shapes:</strong> Remove orphan shapes</li>
-                        <li><strong>Delete ALL Orphans:</strong> Comprehensive cleanup of all orphan types</li>
-                    </ul>
-
-                    <pre class="code-block sparql"># Orphan detection logic (example for observation sets):
-SELECT ?orphanSet (COUNT(?obs) AS ?observationCount)
-WHERE {
-  GRAPH &lt;GRAPH_URI&gt; {
-    ?orphanSet cube:observation ?obs .
-    # Must NOT be linked from any cube
-    FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
-  }
-}
-GROUP BY ?orphanSet</pre>
-
-                    <p><strong>Best Practices:</strong></p>
-                    <ol class="doc-list numbered">
-                        <li>Always run the <strong>Find All Orphans - Summary</strong> query first</li>
-                        <li>Review specific orphan types before deletion</li>
-                        <li>Create a backup before running delete operations</li>
-                        <li>Run orphan cleanup AFTER version cleanup to catch newly created orphans</li>
-                    </ol>
-
-                    <h3>Using Templates</h3>
-                    <ol class="doc-list numbered">
-                        <li>Set the <strong>Graph URI</strong> (e.g., <code>https://lindas.admin.ch/sfoe/cube</code>)</li>
-                        <li>For single-cube operations, set the <strong>Cube URI</strong></li>
-                        <li>Select a template from the dropdown</li>
-                        <li>Review the generated query - placeholders are auto-replaced</li>
-                        <li>Click <strong>Run Query</strong> (SELECT) or <strong>Execute Update</strong> (DELETE)</li>
-                    </ol>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Setup Instructions</h2>
-                <div class="doc-section">
-                    <h3>Prerequisites</h3>
-                    <ul class="doc-list">
-                        <li><strong>Node.js</strong> v16 or later</li>
-                        <li><strong>Apache Fuseki</strong> v4.x or v5.x</li>
-                        <li>Internet connection (for LINDAS access)</li>
-                    </ul>
-
-                    <h3>Windows Setup</h3>
-                    <div class="setup-steps">
-                        <h4>1. Start Apache Fuseki</h4>
-                        <pre class="code-block">cd fuseki
-.\fuseki-server.bat</pre>
-
-                        <h4>2. Start the Web Application</h4>
-                        <pre class="code-block">cd web-app
-npm install
-npm start</pre>
-
-                        <h4>3. Open Browser</h4>
-                        <p>Navigate to <a href="http://localhost:3001" target="_blank">http://localhost:3001</a></p>
+                <!-- Installation Guide Section -->
+                <section id="section-installation" class="content-section">
+                    <div class="section-intro">
+                        <p>Step-by-step instructions to install and configure local triplestores.</p>
                     </div>
 
-                    <h3>macOS / Linux Setup</h3>
-                    <div class="setup-steps">
-                        <h4>1. Install Apache Fuseki</h4>
-                        <pre class="code-block"># Download from https://jena.apache.org/download/
-# Or use Homebrew on macOS:
-brew install apache-jena-fuseki
+                    <div class="installation-tabs">
+                        <button class="install-tab-btn active" data-install="fuseki">Apache Fuseki</button>
+                        <button class="install-tab-btn" data-install="stardog">Stardog</button>
+                        <button class="install-tab-btn" data-install="graphdb">GraphDB</button>
+                        <button class="install-tab-btn" data-install="docker">Docker Compose</button>
+                    </div>
 
-# Or download and extract manually:
-curl -O https://dlcdn.apache.org/jena/binaries/apache-jena-fuseki-5.0.0.tar.gz
-tar xzf apache-jena-fuseki-5.0.0.tar.gz
-cd apache-jena-fuseki-5.0.0</pre>
+                    <div class="installation-content">
+                        <div class="install-panel active" id="install-fuseki">
+                            <div class="card">
+                                <h3>Apache Fuseki Installation</h3>
+                                <p class="description">Free, open-source SPARQL server from the Apache Jena project.</p>
 
-                        <h4>2. Start Apache Fuseki</h4>
-                        <pre class="code-block"># If installed via Homebrew:
-fuseki-server --mem /lindas
+                                <h4>Option 1: Docker (Recommended)</h4>
+                                <pre class="code-block bash"># Pull and run Fuseki
+docker run -d --name fuseki \
+  -p 3030:3030 \
+  -e ADMIN_PASSWORD=admin \
+  stain/jena-fuseki
 
-# If using downloaded version:
+# Create a dataset
+curl -X POST 'http://localhost:3030/$/datasets' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'dbName=lindas&dbType=tdb2'</pre>
+
+                                <h4>Option 2: Manual Installation</h4>
+                                <ol class="install-steps">
+                                    <li>
+                                        <strong>Download Apache Jena Fuseki</strong>
+                                        <p>Download from <a href="https://jena.apache.org/download/" target="_blank">Apache Jena Downloads</a></p>
+                                    </li>
+                                    <li>
+                                        <strong>Extract the Archive</strong>
+                                        <pre class="code-block bash">tar xzf apache-jena-fuseki-*.tar.gz
+cd apache-jena-fuseki-*</pre>
+                                    </li>
+                                    <li>
+                                        <strong>Start the Server</strong>
+                                        <pre class="code-block bash"># In-memory database (data lost on restart)
 ./fuseki-server --mem /lindas
 
-# Or with persistent storage:
+# Persistent database
 ./fuseki-server --tdb2 --loc=./data /lindas</pre>
+                                    </li>
+                                    <li>
+                                        <strong>Verify Installation</strong>
+                                        <p>Open <a href="http://localhost:3030" target="_blank">http://localhost:3030</a> in your browser</p>
+                                    </li>
+                                </ol>
 
-                        <h4>3. Start the Web Application</h4>
-                        <pre class="code-block">cd web-app
+                                <div class="config-summary">
+                                    <h4>Configuration Summary</h4>
+                                    <table class="config-table">
+                                        <tr><th>Endpoint</th><td>http://localhost:3030</td></tr>
+                                        <tr><th>Query Path</th><td>/{dataset}/query</td></tr>
+                                        <tr><th>Update Path</th><td>/{dataset}/update</td></tr>
+                                        <tr><th>Default Dataset</th><td>lindas</td></tr>
+                                        <tr><th>Authentication</th><td>None (local)</td></tr>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="install-panel" id="install-stardog">
+                            <div class="card">
+                                <h3>Stardog Installation</h3>
+                                <p class="description">Enterprise knowledge graph platform with free tier available.</p>
+
+                                <div class="warning-banner">
+                                    <span class="warning-icon">&#9888;</span>
+                                    <div>
+                                        <p><strong>License Required:</strong> Stardog will NOT start without a valid license file.</p>
+                                        <p style="margin-top: 0.5rem;"><strong>To get a FREE license:</strong></p>
+                                        <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                                            <li>Go to <a href="https://www.stardog.com/get-started/" target="_blank">stardog.com/get-started</a></li>
+                                            <li>Click "Get Started Free" and create an account</li>
+                                            <li>Download the license file (<code>stardog-license-key.bin</code>)</li>
+                                            <li>Place it in your Stardog data directory before starting</li>
+                                        </ol>
+                                        <p style="margin-top: 0.5rem;"><em>If you want a license-free option, use Apache Fuseki instead.</em></p>
+                                    </div>
+                                </div>
+
+                                <h4>Option 1: Docker</h4>
+                                <pre class="code-block bash"># Step 1: Create data directory
+mkdir -p stardog-data
+
+# Step 2: Copy your license file (REQUIRED!)
+cp stardog-license-key.bin stardog-data/
+
+# Step 3: Run Stardog
+docker run -d --name stardog \
+  -p 5820:5820 \
+  -v $(pwd)/stardog-data:/var/opt/stardog \
+  stardog/stardog:latest
+
+# Step 4: Wait for startup, then create a database
+sleep 30
+docker exec stardog \
+  /opt/stardog/bin/stardog-admin db create -n lindas</pre>
+
+                                <h4>Option 2: Manual Installation</h4>
+                                <ol class="install-steps">
+                                    <li>Download from <a href="https://www.stardog.com/get-started/" target="_blank">Stardog Get Started</a></li>
+                                    <li>Install and add license file to <code>$STARDOG_HOME</code></li>
+                                    <li>Start: <code>stardog-admin server start</code></li>
+                                    <li>Create database: <code>stardog-admin db create -n lindas</code></li>
+                                </ol>
+
+                                <div class="config-summary">
+                                    <h4>Configuration Summary</h4>
+                                    <table class="config-table">
+                                        <tr><th>Endpoint</th><td>http://localhost:5820</td></tr>
+                                        <tr><th>Query Path</th><td>/{database}/query</td></tr>
+                                        <tr><th>Update Path</th><td>/{database}/update</td></tr>
+                                        <tr><th>Default Database</th><td>lindas</td></tr>
+                                        <tr><th>Default Username</th><td>admin</td></tr>
+                                        <tr><th>Default Password</th><td>admin</td></tr>
+                                    </table>
+                                </div>
+
+                                <div class="limits-box">
+                                    <h4>Free Edition Limits</h4>
+                                    <ul>
+                                        <li>Max 25 databases</li>
+                                        <li>Max 10GB data</li>
+                                        <li>Max 1 hour query time</li>
+                                    </ul>
+                                </div>
+
+                                <div class="warning-banner" style="background-color: #e8f4f8; border-color: #5bc0de;">
+                                    <span class="warning-icon" style="color: #5bc0de;">&#9432;</span>
+                                    <div>
+                                        <p><strong>Stardog Cloud Users:</strong> SSO credentials do NOT work for API access!</p>
+                                        <p style="margin-top: 0.5rem;">To create API credentials:</p>
+                                        <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0;">
+                                            <li>Go to <a href="https://cloud.stardog.com" target="_blank">cloud.stardog.com</a> and log in with SSO</li>
+                                            <li>Click your connection endpoint</li>
+                                            <li>Open <strong>Stardog Studio</strong></li>
+                                            <li>Navigate to <strong>Security</strong> (cog icon)</li>
+                                            <li>Click <strong>+</strong> in the "USERS" pane</li>
+                                            <li>Create a new user with username/password</li>
+                                            <li>Use those credentials (not SSO) to connect</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="install-panel" id="install-graphdb">
+                            <div class="card">
+                                <h3>GraphDB Installation</h3>
+                                <p class="description">RDF database with reasoning capabilities from Ontotext.</p>
+
+                                <h4>Option 1: Docker (Recommended)</h4>
+                                <pre class="code-block bash"># Run GraphDB Free
+docker run -d --name graphdb \
+  -p 7200:7200 \
+  ontotext/graphdb:free
+
+# Access the web interface to create a repository
+# http://localhost:7200</pre>
+
+                                <h4>Option 2: Manual Installation</h4>
+                                <ol class="install-steps">
+                                    <li>Download from <a href="https://www.ontotext.com/products/graphdb/download/" target="_blank">GraphDB Download</a></li>
+                                    <li>Run the installer for your OS</li>
+                                    <li>Access at <code>http://localhost:7200</code></li>
+                                    <li>Create repository via web interface</li>
+                                </ol>
+
+                                <div class="config-summary">
+                                    <h4>Configuration Summary</h4>
+                                    <table class="config-table">
+                                        <tr><th>Endpoint</th><td>http://localhost:7200</td></tr>
+                                        <tr><th>Query Path</th><td>/repositories/{repository}</td></tr>
+                                        <tr><th>Update Path</th><td>/repositories/{repository}/statements</td></tr>
+                                        <tr><th>Default Repository</th><td>test</td></tr>
+                                        <tr><th>Authentication</th><td>None (local)</td></tr>
+                                    </table>
+                                </div>
+
+                                <div class="limits-box">
+                                    <h4>Free Edition Limits</h4>
+                                    <ul>
+                                        <li>Max 2 queries/second</li>
+                                        <li>Max 1 concurrent query</li>
+                                        <li>No cluster support</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="install-panel" id="install-docker">
+                            <div class="card">
+                                <h3>Docker Compose Setup</h3>
+                                <p class="description">Run all three triplestores together using Docker Compose.</p>
+
+                                <h4>docker-compose.yml</h4>
+                                <pre class="code-block yaml">version: '3.8'
+
+services:
+  fuseki:
+    image: stain/jena-fuseki
+    container_name: fuseki
+    ports:
+      - "3030:3030"
+    environment:
+      - ADMIN_PASSWORD=admin
+    volumes:
+      - fuseki-data:/fuseki
+
+  graphdb:
+    image: ontotext/graphdb:free
+    container_name: graphdb
+    ports:
+      - "7200:7200"
+    volumes:
+      - graphdb-data:/opt/graphdb/home
+
+  # Note: Stardog requires a license file
+  # stardog:
+  #   image: stardog/stardog:latest
+  #   container_name: stardog
+  #   ports:
+  #     - "5820:5820"
+  #   volumes:
+  #     - ./stardog-license-key.bin:/var/opt/stardog/stardog-license-key.bin
+  #     - stardog-data:/var/opt/stardog
+
+volumes:
+  fuseki-data:
+  graphdb-data:
+  # stardog-data:</pre>
+
+                                <h4>Usage</h4>
+                                <pre class="code-block bash"># Start all services
+docker-compose up -d
+
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
+
+# Stop all services
+docker-compose down</pre>
+
+                                <h4>Endpoints After Setup</h4>
+                                <table class="config-table">
+                                    <tr><th>Fuseki</th><td><a href="http://localhost:3030" target="_blank">http://localhost:3030</a></td></tr>
+                                    <tr><th>GraphDB</th><td><a href="http://localhost:7200" target="_blank">http://localhost:7200</a></td></tr>
+                                    <tr><th>Stardog</th><td><a href="http://localhost:5820" target="_blank">http://localhost:5820</a> (requires license)</td></tr>
+                                </table>
+                            </div>
+
+                            <div class="card">
+                                <h3>Running the Web Application</h3>
+
+                                <h4>Prerequisites</h4>
+                                <ul class="install-list">
+                                    <li>Node.js v16 or later</li>
+                                    <li>npm (comes with Node.js)</li>
+                                </ul>
+
+                                <h4>Installation</h4>
+                                <pre class="code-block bash"># Navigate to web-app directory
+cd web-app
+
+# Install dependencies
 npm install
-npm start</pre>
 
-                        <h4>4. Open Browser</h4>
-                        <p>Navigate to <a href="http://localhost:3001" target="_blank">http://localhost:3001</a></p>
+# Start the application
+npm start
+
+# Or for development with auto-reload
+npm run dev</pre>
+
+                                <h4>Access</h4>
+                                <p>Open <a href="http://localhost:3001" target="_blank">http://localhost:3001</a> in your browser.</p>
+                            </div>
+                        </div>
                     </div>
-
-                    <h3>Verifying Setup</h3>
-                    <ol class="doc-list numbered">
-                        <li>Fuseki UI should be accessible at <a href="http://localhost:3030" target="_blank">http://localhost:3030</a></li>
-                        <li>Web app should show "Fuseki: Connected" in the top-right corner</li>
-                        <li>Create the <code>lindas</code> dataset in Setup tab if it doesn't exist</li>
-                    </ol>
-                </div>
+                </section>
             </div>
-        </section>
-    </main>
-
-    <footer>
-        <p>LINDAS Cube Version Cleanup - Demo Tool</p>
-        <p class="small">Preserves the newest 2 versions of each cube, deletes older versions</p>
-    </footer>
+        </main>
+    </div>
 
     <script src="app.js"></script>
 </body>
