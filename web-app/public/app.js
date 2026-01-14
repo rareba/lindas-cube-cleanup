@@ -300,6 +300,44 @@ function initConnectionSection() {
         connectionMode.addEventListener('change', updateConnectionUI);
     }
 
+    // Endpoint URL input - track manual changes
+    const endpointUrl = document.getElementById('endpoint-url');
+    if (endpointUrl) {
+        endpointUrl.addEventListener('input', () => {
+            state.endpointUrl = endpointUrl.value.trim();
+        });
+    }
+
+    // Database/dataset name inputs - track changes
+    const datasetName = document.getElementById('dataset-name');
+    if (datasetName) {
+        datasetName.addEventListener('input', () => {
+            state.datasetName = datasetName.value.trim();
+        });
+    }
+
+    const stardogDatabase = document.getElementById('stardog-database');
+    if (stardogDatabase) {
+        stardogDatabase.addEventListener('input', () => {
+            state.stardogDatabase = stardogDatabase.value.trim();
+        });
+    }
+
+    // Auth inputs - track changes
+    const authUsername = document.getElementById('auth-username');
+    if (authUsername) {
+        authUsername.addEventListener('input', () => {
+            state.authUsername = authUsername.value;
+        });
+    }
+
+    const authPassword = document.getElementById('auth-password');
+    if (authPassword) {
+        authPassword.addEventListener('input', () => {
+            state.authPassword = authPassword.value;
+        });
+    }
+
     // Test connection button
     const testBtn = document.getElementById('btn-test-connection');
     if (testBtn) {
@@ -337,10 +375,27 @@ function updateConnectionUI() {
     state.connectionMode = mode;
 
     // Update endpoint URL and hint
+    // Only set default URL if the current URL is empty or is a known placeholder
     const defaults = TRIPLESTORE_DEFAULTS[type][mode];
     if (defaults && endpointUrl) {
-        endpointUrl.value = defaults.baseUrl;
-        state.endpointUrl = defaults.baseUrl;
+        const currentUrl = endpointUrl.value.trim();
+        const knownDefaults = [
+            '', // empty
+            'http://localhost:3030',
+            'http://localhost:5820',
+            'http://localhost:7200',
+            'https://lindas.admin.ch',
+            'https://sd-xxxxx.stardog.cloud:5820',
+            'https://your-instance.graphdb.cloud'
+        ];
+        // Only reset to default if current URL is empty or a known placeholder
+        if (!currentUrl || knownDefaults.includes(currentUrl)) {
+            endpointUrl.value = defaults.baseUrl;
+            state.endpointUrl = defaults.baseUrl;
+        } else {
+            // Preserve user-entered custom URL
+            state.endpointUrl = currentUrl;
+        }
     }
 
     if (endpointHint) {
@@ -1686,7 +1741,8 @@ function loadQueryTemplate() {
     if (!templateSelect || !queryText) return;
 
     const template = templateSelect.value;
-    const templates = getQueryTemplates(graphUri, cubeUri);
+    // Pass triplestore type to get appropriate query syntax
+    const templates = getQueryTemplates(graphUri, cubeUri, state.triplestoreType);
 
     if (templates[template]) {
         queryText.value = templates[template].query;
@@ -1699,8 +1755,9 @@ function loadQueryTemplate() {
     }
 }
 
-function getQueryTemplates(graphUri, cubeUri) {
-    return {
+function getQueryTemplates(graphUri, cubeUri, triplestoreType = 'fuseki') {
+    // Base templates that work on all triplestores
+    const templates = {
         'list-cubes': {
             type: 'select',
             query: 'PREFIX cube: <https://cube.link/>\n\nSELECT ?cube ?version\nWHERE {\n  GRAPH <' + graphUri + '> {\n    ?cube a cube:Cube .\n    BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?version)\n  }\n}\nORDER BY ?cube'
@@ -1729,19 +1786,52 @@ function getQueryTemplates(graphUri, cubeUri) {
             type: 'select',
             query: 'PREFIX cube: <https://cube.link/>\n\nSELECT ?set\nWHERE {\n  GRAPH <' + graphUri + '> {\n    ?set a cube:ObservationSet .\n    FILTER NOT EXISTS { ?cube cube:observationSet ?set }\n  }\n}\nLIMIT 100'
         },
-        'delete-single': {
-            type: 'update',
-            query: '# WARNING: This will delete a single cube version\n# Replace CUBE_URI with the actual cube URI\n\nPREFIX cube: <https://cube.link/>\n\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    <' + (cubeUri || 'ENTER_CUBE_URI') + '> (cube:observationSet/cube:observation)* ?related .\n    ?s ?p ?o .\n    FILTER(?s = <' + (cubeUri || 'ENTER_CUBE_URI') + '> || ?s = ?related)\n  }\n}'
-        },
-        'delete-old-versions': {
-            type: 'update',
-            query: '# WARNING: This will delete all cube versions ranked > 2 (keeps newest 2)\n# For safe deletion with backups, use the Deletion Wizard instead.\n#\n# IMPORTANT: Stardog requires separate DELETE and WHERE clauses.\n# The DELETE WHERE { ... } shorthand does not work with FILTER.\n#\n# This query uses the same ranking logic as Preview Deletions:\n# - Calculates rank based on version number (higher version = lower rank)\n# - Deletes versions with rank > 2 (older than newest 2)\n\nPREFIX cube: <https://cube.link/>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n\n# Delete cube versions ranked > 2 and their related data\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    # Subquery to calculate rank for each cube version\n    {\n      SELECT ?cube ?version (COUNT(?higherVersion) + 1 AS ?rank)\n      WHERE {\n        ?cube a cube:Cube .\n        BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube)\n        BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?version)\n        \n        OPTIONAL {\n          ?otherCube a cube:Cube .\n          BIND(REPLACE(STR(?otherCube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?otherBase)\n          BIND(xsd:integer(REPLACE(STR(?otherCube), "^.*/([0-9]+)/?$", "$1")) AS ?higherVersion)\n          FILTER(?otherBase = ?baseCube && ?higherVersion > ?version)\n        }\n      }\n      GROUP BY ?cube ?version\n      HAVING (COUNT(?higherVersion) + 1 > 2)\n    }\n    \n    # Match the cube and its related triples to delete\n    {\n      # Delete cube triples\n      ?s ?p ?o .\n      FILTER(?s = ?cube)\n    }\n    UNION\n    {\n      # Delete observation set triples\n      ?cube cube:observationSet ?set .\n      ?s ?p ?o .\n      FILTER(?s = ?set)\n    }\n    UNION\n    {\n      # Delete observation triples\n      ?cube cube:observationSet ?set .\n      ?set cube:observation ?obs .\n      ?s ?p ?o .\n      FILTER(?s = ?obs)\n    }\n  }\n}'
-        },
         'delete-orphans': {
             type: 'update',
             query: 'PREFIX cube: <https://cube.link/>\n\n# Delete orphan observations\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?obs ?p ?o\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    ?obs a cube:Observation .\n    ?obs ?p ?o .\n    FILTER NOT EXISTS { ?set cube:observation ?obs }\n  }\n}'
         }
     };
+
+    // Triplestore-specific DELETE queries
+    // Stardog requires explicit DELETE and WHERE clauses (no DELETE WHERE shorthand with FILTER)
+    // GraphDB and Fuseki support standard SPARQL 1.1 UPDATE
+
+    if (triplestoreType === 'stardog') {
+        // Stardog-specific syntax: separate DELETE and WHERE clauses required
+        templates['delete-single'] = {
+            type: 'update',
+            query: '# WARNING: This will delete a single cube version and all related data\n# Triplestore: Stardog (uses explicit DELETE/WHERE syntax)\n#\n# Replace ENTER_CUBE_URI with the actual cube URI to delete\n\nPREFIX cube: <https://cube.link/>\n\n# Stardog requires separate DELETE and WHERE clauses\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    # Match the cube URI\n    VALUES ?targetCube { <' + (cubeUri || 'ENTER_CUBE_URI') + '> }\n    \n    # Find cube and related resources\n    {\n      # Cube triples\n      ?s ?p ?o .\n      FILTER(?s = ?targetCube)\n    }\n    UNION\n    {\n      # ObservationSet triples\n      ?targetCube cube:observationSet ?set .\n      ?s ?p ?o .\n      FILTER(?s = ?set)\n    }\n    UNION\n    {\n      # Observation triples\n      ?targetCube cube:observationSet ?set .\n      ?set cube:observation ?obs .\n      ?s ?p ?o .\n      FILTER(?s = ?obs)\n    }\n  }\n}'
+        };
+
+        templates['delete-old-versions'] = {
+            type: 'update',
+            query: '# WARNING: This will delete all cube versions ranked > 2 (keeps newest 2)\n# Triplestore: Stardog (uses explicit DELETE/WHERE syntax)\n# For safe deletion with backups, use the Deletion Wizard instead.\n#\n# Stardog requires separate DELETE and WHERE clauses.\n# The DELETE WHERE { ... } shorthand does not work with FILTER/subqueries.\n\nPREFIX cube: <https://cube.link/>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    # Subquery to find cubes with rank > 2 (to delete)\n    {\n      SELECT ?cube ?version (COUNT(?higherVersion) + 1 AS ?rank)\n      WHERE {\n        ?cube a cube:Cube .\n        BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube)\n        BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?version)\n        \n        OPTIONAL {\n          ?otherCube a cube:Cube .\n          BIND(REPLACE(STR(?otherCube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?otherBase)\n          BIND(xsd:integer(REPLACE(STR(?otherCube), "^.*/([0-9]+)/?$", "$1")) AS ?higherVersion)\n          FILTER(?otherBase = ?baseCube && ?higherVersion > ?version)\n        }\n      }\n      GROUP BY ?cube ?version\n      HAVING (COUNT(?higherVersion) + 1 > 2)\n    }\n    \n    # Match triples to delete\n    {\n      ?s ?p ?o .\n      FILTER(?s = ?cube)\n    }\n    UNION\n    {\n      ?cube cube:observationSet ?set .\n      ?s ?p ?o .\n      FILTER(?s = ?set)\n    }\n    UNION\n    {\n      ?cube cube:observationSet ?set .\n      ?set cube:observation ?obs .\n      ?s ?p ?o .\n      FILTER(?s = ?obs)\n    }\n  }\n}'
+        };
+    } else if (triplestoreType === 'graphdb') {
+        // GraphDB-specific syntax: supports standard SPARQL 1.1 UPDATE
+        templates['delete-single'] = {
+            type: 'update',
+            query: '# WARNING: This will delete a single cube version and all related data\n# Triplestore: GraphDB (standard SPARQL 1.1 UPDATE)\n#\n# Replace ENTER_CUBE_URI with the actual cube URI to delete\n\nPREFIX cube: <https://cube.link/>\n\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    BIND(<' + (cubeUri || 'ENTER_CUBE_URI') + '> AS ?targetCube)\n    \n    {\n      # Cube triples\n      ?s ?p ?o .\n      FILTER(?s = ?targetCube)\n    }\n    UNION\n    {\n      # ObservationSet triples  \n      ?targetCube cube:observationSet ?set .\n      ?s ?p ?o .\n      FILTER(?s = ?set)\n    }\n    UNION\n    {\n      # Observation triples\n      ?targetCube cube:observationSet ?set .\n      ?set cube:observation ?obs .\n      ?s ?p ?o .\n      FILTER(?s = ?obs)\n    }\n  }\n}'
+        };
+
+        templates['delete-old-versions'] = {
+            type: 'update',
+            query: '# WARNING: This will delete all cube versions ranked > 2 (keeps newest 2)\n# Triplestore: GraphDB (standard SPARQL 1.1 UPDATE)\n# For safe deletion with backups, use the Deletion Wizard instead.\n\nPREFIX cube: <https://cube.link/>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    # Subquery to find cubes with rank > 2\n    {\n      SELECT ?cube (COUNT(?higherVersion) + 1 AS ?rank)\n      WHERE {\n        ?cube a cube:Cube .\n        BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube)\n        BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?version)\n        \n        OPTIONAL {\n          ?otherCube a cube:Cube .\n          BIND(REPLACE(STR(?otherCube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?otherBase)\n          BIND(xsd:integer(REPLACE(STR(?otherCube), "^.*/([0-9]+)/?$", "$1")) AS ?higherVersion)\n          FILTER(?otherBase = ?baseCube && ?higherVersion > ?version)\n        }\n      }\n      GROUP BY ?cube\n      HAVING (COUNT(?higherVersion) + 1 > 2)\n    }\n    \n    # Match triples to delete\n    {\n      ?s ?p ?o .\n      FILTER(?s = ?cube)\n    }\n    UNION\n    {\n      ?cube cube:observationSet ?set .\n      ?s ?p ?o .\n      FILTER(?s = ?set)\n    }\n    UNION\n    {\n      ?cube cube:observationSet ?set .\n      ?set cube:observation ?obs .\n      ?s ?p ?o .\n      FILTER(?s = ?obs)\n    }\n  }\n}'
+        };
+    } else {
+        // Fuseki (default) - standard SPARQL 1.1 UPDATE
+        templates['delete-single'] = {
+            type: 'update',
+            query: '# WARNING: This will delete a single cube version and all related data\n# Triplestore: Apache Fuseki (standard SPARQL 1.1 UPDATE)\n#\n# Replace ENTER_CUBE_URI with the actual cube URI to delete\n\nPREFIX cube: <https://cube.link/>\n\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    BIND(<' + (cubeUri || 'ENTER_CUBE_URI') + '> AS ?targetCube)\n    \n    {\n      # Cube triples\n      ?s ?p ?o .\n      FILTER(?s = ?targetCube)\n    }\n    UNION\n    {\n      # ObservationSet triples\n      ?targetCube cube:observationSet ?set .\n      ?s ?p ?o .\n      FILTER(?s = ?set)\n    }\n    UNION\n    {\n      # Observation triples\n      ?targetCube cube:observationSet ?set .\n      ?set cube:observation ?obs .\n      ?s ?p ?o .\n      FILTER(?s = ?obs)\n    }\n  }\n}'
+        };
+
+        templates['delete-old-versions'] = {
+            type: 'update',
+            query: '# WARNING: This will delete all cube versions ranked > 2 (keeps newest 2)\n# Triplestore: Apache Fuseki (standard SPARQL 1.1 UPDATE)\n# For safe deletion with backups, use the Deletion Wizard instead.\n\nPREFIX cube: <https://cube.link/>\nPREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    # Subquery to find cubes with rank > 2\n    {\n      SELECT ?cube (COUNT(?higherVersion) + 1 AS ?rank)\n      WHERE {\n        ?cube a cube:Cube .\n        BIND(REPLACE(STR(?cube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?baseCube)\n        BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?version)\n        \n        OPTIONAL {\n          ?otherCube a cube:Cube .\n          BIND(REPLACE(STR(?otherCube), "^(.*/[^/]+)/[0-9]+/?$", "$1") AS ?otherBase)\n          BIND(xsd:integer(REPLACE(STR(?otherCube), "^.*/([0-9]+)/?$", "$1")) AS ?higherVersion)\n          FILTER(?otherBase = ?baseCube && ?higherVersion > ?version)\n        }\n      }\n      GROUP BY ?cube\n      HAVING (COUNT(?higherVersion) + 1 > 2)\n    }\n    \n    # Match triples to delete\n    {\n      ?s ?p ?o .\n      FILTER(?s = ?cube)\n    }\n    UNION\n    {\n      ?cube cube:observationSet ?set .\n      ?s ?p ?o .\n      FILTER(?s = ?set)\n    }\n    UNION\n    {\n      ?cube cube:observationSet ?set .\n      ?set cube:observation ?obs .\n      ?s ?p ?o .\n      FILTER(?s = ?obs)\n    }\n  }\n}'
+        };
+    }
+
+    return templates;
 }
 
 async function executeQuery() {
