@@ -20,12 +20,39 @@ Complete testing of all API endpoints against both GraphDB Local and Stardog Clo
 - **Graph**: `https://lindas.admin.ch/sfoe`
 - **Test Data**: 5 cube versions (example.org/cube/version/1-5)
 
-## Bug Fixed
+## Bugs Fixed
 
-### Duplicate Cubes in Query Editor
+### 1. Duplicate Cubes in Query Editor
 The `/api/query/cubes` endpoint was returning duplicate cube URIs. Fixed by deduplicating with `Set`:
 ```javascript
 const cubes = [...new Set(bindings.map(b => b.cube?.value).filter(Boolean))];
+```
+
+### 2. Inconsistent Endpoint URL Fallbacks
+Five endpoints had inconsistent URL construction for Fuseki/Stardog when no database was specified:
+
+**Before (incorrect)**:
+```javascript
+sparqlEndpoint = db ? `${base}/${db}/query` : base;  // Missing /query suffix
+```
+
+**After (fixed)**:
+```javascript
+sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+```
+
+Affected endpoints:
+- `/api/cubes/list-versions`
+- `/api/cubes/count-versions`
+- `/api/cubes/identify-deletions`
+- `/api/cubes/preview-deletion`
+- `/api/backup/create`
+
+### 3. Missing triplestoreType in Query Execution (app.js)
+The frontend was not passing the `triplestoreType` parameter to `/api/query/execute`:
+```javascript
+// Added to app.js executeQuery function:
+triplestoreType: config.type,
 ```
 
 ## Test Results
@@ -89,11 +116,13 @@ The backup/delete/restore cycle is fully reversible.
 
 ## Files Modified
 
-- `web-app/server.js` - Fixed duplicate cubes bug
+- `web-app/server.js` - Fixed duplicate cubes bug and endpoint URL fallbacks
+- `web-app/public/app.js` - Added triplestoreType parameter to query execution
 
 ## Commits
 
 1. `2c19b48` - Fix duplicate cubes bug in Query Editor cube listing
+2. `d737807` - Fix endpoint URL construction for Fuseki/Stardog without database
 
 ## Summary
 
