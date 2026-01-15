@@ -1,0 +1,30 @@
+# Docker Compose for GraphDB Local Testing
+# Used to test the LINDAS Cube Version Cleanup tool with GraphDB
+#
+# Usage:
+#   docker-compose -f docker-compose.graphdb.yml up -d
+#   docker-compose -f docker-compose.graphdb.yml down
+#
+# GraphDB Workbench: http://localhost:7200
+
+services:
+  graphdb:
+    image: ontotext/graphdb:10.8.2
+    container_name: graphdb-lindas-test
+    ports:
+      - "7200:7200"
+    volumes:
+      - graphdb-data:/opt/graphdb/home
+      - ./data:/data:ro
+    environment:
+      - GDB_HEAP_SIZE=2g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7200/rest/repositories"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  graphdb-data:

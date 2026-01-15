@@ -1007,11 +1007,20 @@ app.post('/api/fuseki/import', async (req, res) => {
 // List cube versions in a graph (uses universal query 01)
 app.post('/api/cubes/list-versions', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
-        // Support both endpoint and baseUrl, and both dataset and database
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+        // Support both endpoint and baseUrl, and dataset/database/repository for different triplestores
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            // Fuseki and Stardog use /{db}/query pattern
+            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        }
         const auth = { username, password };
 
         let query = loadQuery('01-list-all-cube-versions.rq');
@@ -1062,10 +1071,18 @@ app.post('/api/cubes/list-versions', async (req, res) => {
 // Count versions per cube (uses universal query 02)
 app.post('/api/cubes/count-versions', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        }
         const auth = { username, password };
 
         let query = loadQuery('02-count-versions-per-cube.rq');
@@ -1102,10 +1119,18 @@ app.post('/api/cubes/count-versions', async (req, res) => {
 // Identify versions to delete - gets all versions and calculates which to keep/delete
 app.post('/api/cubes/identify-deletions', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        }
         const auth = { username, password };
 
         // Use the list-versions query to get ALL versions
@@ -1186,10 +1211,18 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
 // Preview triples to delete for a specific cube
 app.post('/api/cubes/preview-deletion', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        }
         const auth = { username, password };
 
         const query = `
@@ -1254,10 +1287,18 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
 // Delete observations - Query 07
 app.post('/api/cubes/delete-observations', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific update endpoint
+        let updateEndpoint;
+        if (triplestoreType === 'graphdb') {
+            updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
+        } else {
+            updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        }
         const auth = { username, password };
 
         const query = `
@@ -1287,10 +1328,18 @@ app.post('/api/cubes/delete-observations', async (req, res) => {
 // Delete observation links - Query 08
 app.post('/api/cubes/delete-observation-links', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific update endpoint
+        let updateEndpoint;
+        if (triplestoreType === 'graphdb') {
+            updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
+        } else {
+            updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        }
         const auth = { username, password };
 
         const query = `
@@ -1319,10 +1368,18 @@ app.post('/api/cubes/delete-observation-links', async (req, res) => {
 // Delete cube metadata - Query 09
 app.post('/api/cubes/delete-metadata', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, cubeUri, username, password } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific update endpoint
+        let updateEndpoint;
+        if (triplestoreType === 'graphdb') {
+            updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
+        } else {
+            updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        }
         const auth = { username, password };
 
         const query = `
@@ -1470,11 +1527,19 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
 // List all graphs in triplestore (for Query Editor dropdown)
 app.post('/api/query/graphs', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, username, password } = req.body;
-        // Support both endpoint/baseUrl and dataset/database field names
+        const { endpoint, baseUrl, dataset, database, repository, username, password, type } = req.body;
+        // Support both endpoint/baseUrl and dataset/database/repository field names
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
 
         const query = `
             SELECT DISTINCT ?graph (COUNT(*) as ?tripleCount)
@@ -1500,11 +1565,19 @@ app.post('/api/query/graphs', async (req, res) => {
 // List all cubes in a graph (for Query Editor dropdown)
 app.post('/api/query/cubes', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, graphUri, username, password } = req.body;
-        // Support both endpoint/baseUrl and dataset/database field names
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+        // Support both endpoint/baseUrl and dataset/database/repository field names
         const base = endpoint || baseUrl;
-        const db = dataset || database;
-        const sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+
+        // Construct triplestore-specific endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1541,11 +1614,12 @@ app.post('/api/query/cubes', async (req, res) => {
 // Execute raw SPARQL query (SELECT or UPDATE)
 app.post('/api/query/execute', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, query, queryType, username, password } = req.body;
-        // Support both endpoint/baseUrl and dataset/database field names
+        const { endpoint, baseUrl, dataset, database, repository, query, queryType, username, password, triplestoreType } = req.body;
+        // Support all field naming conventions: dataset (Fuseki), database (Stardog), repository (GraphDB)
         const base = endpoint || baseUrl;
-        const db = dataset || database;
+        const db = dataset || database || repository;
         const auth = { username, password };
+        const type = triplestoreType || 'fuseki';
 
         if (!query || !query.trim()) {
             return res.status(400).json({ error: 'Query is required' });
@@ -1553,9 +1627,20 @@ app.post('/api/query/execute', async (req, res) => {
 
         const startTime = Date.now();
 
+        // Construct triplestore-specific endpoint paths
+        let sparqlEndpoint, updateEndpoint;
+        if (type === 'graphdb') {
+            // GraphDB uses /repositories/{repo} for queries and /repositories/{repo}/statements for updates
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+            updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
+        } else {
+            // Fuseki and Stardog use /{db}/query and /{db}/update
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+            updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        }
+
         if (queryType === 'update') {
             // Execute UPDATE query
-            const updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
             await executeSparqlUpdate(updateEndpoint, query, auth);
             const duration = Date.now() - startTime;
 
@@ -1567,7 +1652,6 @@ app.post('/api/query/execute', async (req, res) => {
             });
         } else {
             // Execute SELECT query
-            const sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
             const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
             const duration = Date.now() - startTime;
 
@@ -1621,8 +1705,19 @@ setInterval(cleanupOldBackups, 60 * 60 * 1000);
 // Create backup before deletion
 app.post('/api/backup/create', async (req, res) => {
     try {
-        const { endpoint, dataset, graphUri, cubeUri } = req.body;
-        const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+        const auth = { username, password };
+
+        // Construct triplestore-specific query endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+        }
 
         // CONSTRUCT query to get all triples for the cube
         const query = `
@@ -1687,7 +1782,8 @@ app.post('/api/backup/create', async (req, res) => {
 
         const headers = {
             'Accept': 'application/n-triples',
-            'Content-Type': 'application/x-www-form-urlencoded'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            ...buildAuthHeaders(auth.username, auth.password)
         };
 
         const response = await fetch(sparqlEndpoint, {
@@ -1719,8 +1815,9 @@ app.post('/api/backup/create', async (req, res) => {
             backupId: backupId,
             cubeUri: cubeUri,
             graphUri: graphUri,
-            endpoint: endpoint,
-            dataset: dataset,
+            endpoint: base,
+            dataset: db,
+            type: triplestoreType,
             tripleCount: tripleCount,
             createdAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
@@ -1797,7 +1894,7 @@ app.get('/api/backup/:backupId', (req, res) => {
 // Restore from backup
 app.post('/api/backup/restore', async (req, res) => {
     try {
-        const { backupId, endpoint, dataset } = req.body;
+        const { backupId, endpoint, baseUrl, dataset, database, repository, username, password, type } = req.body;
         const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
         const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
 
@@ -1808,15 +1905,25 @@ app.post('/api/backup/restore', async (req, res) => {
         const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
         const triples = fs.readFileSync(ntFilePath, 'utf8');
 
-        // Import triples back to Fuseki
-        const fusekiEndpoint = endpoint || metadata.endpoint;
-        const fusekiDataset = dataset || metadata.dataset;
-        const dataEndpoint = `${fusekiEndpoint}/${fusekiDataset}/data`;
+        // Use provided values or fall back to metadata
+        const base = endpoint || baseUrl || metadata.endpoint;
+        const db = dataset || database || repository || metadata.dataset;
+        const triplestoreType = type || metadata.type || 'fuseki';
+        const auth = { username, password };
 
-        const response = await fetch(`${dataEndpoint}?graph=${encodeURIComponent(metadata.graphUri)}`, {
+        // Construct triplestore-specific data endpoint
+        let dataEndpoint;
+        if (triplestoreType === 'graphdb') {
+            dataEndpoint = `${base}/repositories/${db}/statements?context=${encodeURIComponent('<' + metadata.graphUri + '>')}`;
+        } else {
+            dataEndpoint = `${base}/${db}/data?graph=${encodeURIComponent(metadata.graphUri)}`;
+        }
+
+        const response = await fetch(dataEndpoint, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/n-triples'
+                'Content-Type': 'application/n-triples',
+                ...buildAuthHeaders(auth.username, auth.password)
             },
             body: triples
         });
