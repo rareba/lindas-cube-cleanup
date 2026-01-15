@@ -1869,6 +1869,7 @@ async function executeQuery() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 ...config,
+                triplestoreType: config.type,
                 query: query,
                 queryType: queryType
             })

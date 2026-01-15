@@ -1019,7 +1019,7 @@ app.post('/api/cubes/list-versions', async (req, res) => {
             sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
         } else {
             // Fuseki and Stardog use /{db}/query pattern
-            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
         }
         const auth = { username, password };
 
@@ -1081,7 +1081,7 @@ app.post('/api/cubes/count-versions', async (req, res) => {
         if (triplestoreType === 'graphdb') {
             sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
         } else {
-            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
         }
         const auth = { username, password };
 
@@ -1129,7 +1129,7 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
         if (triplestoreType === 'graphdb') {
             sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
         } else {
-            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
         }
         const auth = { username, password };
 
@@ -1221,7 +1221,7 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
         if (triplestoreType === 'graphdb') {
             sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
         } else {
-            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
         }
         const auth = { username, password };
 
@@ -1716,7 +1716,7 @@ app.post('/api/backup/create', async (req, res) => {
         if (triplestoreType === 'graphdb') {
             sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
         } else {
-            sparqlEndpoint = db ? `${base}/${db}/query` : base;
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
         }
 
         // CONSTRUCT query to get all triples for the cube
