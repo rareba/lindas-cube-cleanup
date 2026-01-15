@@ -1601,9 +1601,9 @@ app.post('/api/query/cubes', async (req, res) => {
         `;
 
         const result = await executeSparqlSelect(sparqlEndpoint, query, { username, password });
-        // Extract cube URIs from results
+        // Extract cube URIs from results and deduplicate
         const bindings = result.results?.bindings || [];
-        const cubes = bindings.map(b => b.cube?.value).filter(Boolean);
+        const cubes = [...new Set(bindings.map(b => b.cube?.value).filter(Boolean))];
         res.json({ cubes });
     } catch (error) {
         console.error('Error fetching cubes:', error.message);
