@@ -8,6 +8,8 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.10",
+    "archiver": "^6.0.1",
     "express": "^4.18.2",
     "multer": "^2.0.2",
     "n3": "^1.17.2",

@@ -4,6 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const stardog = require('stardog');
+const archiver = require('archiver');
+const AdmZip = require('adm-zip');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -494,10 +496,219 @@ function createExportPackage(triples, metadata) {
 }
 
 /**
- * Parse an import package to extract metadata and triples
- * Supports both v1.0 and v2.0 export formats
+ * Create a ZIP archive backup with manifest and data files
+ * This format is preferred for backups as it:
+ * - Compresses the data (often 70-90% size reduction)
+ * - Separates manifest from data for easy inspection
+ * - Is a standard format that can be opened by any ZIP tool
+ *
+ * ZIP Structure:
+ * - manifest.json: Complete metadata for identification and restore
+ * - data.nt: The actual triples in N-Triples format
  */
-function parseImportPackage(content) {
+function createZipBackup(triples, metadata) {
+    return new Promise((resolve, reject) => {
+        try {
+            // Parse cube URI to extract structured information
+            const cubeUri = metadata.cubeUri || '';
+            const versionMatch = cubeUri.match(/\/(\d+)\/?$/);
+            const version = versionMatch ? parseInt(versionMatch[1]) : null;
+            const baseCube = version !== null ? cubeUri.replace(/\/\d+\/?$/, '') : cubeUri;
+
+            // Create manifest with all information needed for restore
+            const manifest = {
+                // Package metadata
+                formatVersion: '3.0',
+                formatType: 'lindas-cube-backup',
+                createdAt: new Date().toISOString(),
+                createdBy: 'LINDAS Cube Manager',
+
+                // Source information (where the data came from)
+                source: {
+                    endpoint: metadata.endpoint,
+                    dataset: metadata.dataset,
+                    database: metadata.database,
+                    repository: metadata.repository,
+                    triplestoreType: metadata.type || metadata.triplestoreType || 'fuseki',
+                    triplestoreMode: metadata.triplestoreMode || 'local'
+                },
+
+                // Cube identification
+                cube: {
+                    uri: cubeUri,
+                    baseCube: baseCube,
+                    version: version,
+                    name: metadata.cubeName || cubeUri.split('/').slice(-2).join('/'),
+                    title: metadata.title
+                },
+
+                // Graph information
+                graph: {
+                    uri: metadata.graphUri,
+                    description: 'Named graph containing this cube'
+                },
+
+                // Restore configuration
+                restore: {
+                    targetGraph: metadata.graphUri,
+                    recommendedEndpoint: metadata.endpoint,
+                    recommendedDataset: metadata.dataset,
+                    dataFile: 'data.nt',
+                    dataFormat: 'application/n-triples',
+                    instructions: [
+                        'Extract this ZIP file',
+                        'Use the LINDAS Cube Manager import function, or:',
+                        'For Fuseki: POST data.nt to /{dataset}/data?graph=<graphUri>',
+                        'For Stardog: POST data.nt to /{database}?graph=<graphUri>',
+                        'For GraphDB: POST data.nt to /repositories/{repo}/statements?context=<graphUri>'
+                    ]
+                },
+
+                // Statistics
+                stats: {
+                    tripleCount: metadata.tripleCount,
+                    dataFileSize: triples ? Buffer.byteLength(triples, 'utf8') : 0,
+                    backupId: metadata.backupId
+                },
+
+                // Deletion context (if this was a pre-deletion backup)
+                deletionContext: metadata.deletionContext || {
+                    reason: 'Cube version deletion',
+                    deletedAt: new Date().toISOString()
+                }
+            };
+
+            // Generate ZIP filename
+            const cubeName = cubeUri.split('/').slice(-2).join('_').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const zipFilename = `${cubeName}_backup_${timestamp}.zip`;
+            const zipPath = path.join(BACKUP_DIR, zipFilename);
+
+            // Create ZIP archive
+            const output = fs.createWriteStream(zipPath);
+            const archive = archiver('zip', {
+                zlib: { level: 9 } // Maximum compression
+            });
+
+            output.on('close', () => {
+                resolve({
+                    zipPath: zipPath,
+                    zipFilename: zipFilename,
+                    manifest: manifest,
+                    compressedSize: archive.pointer(),
+                    uncompressedSize: manifest.stats.dataFileSize
+                });
+            });
+
+            archive.on('error', (err) => {
+                reject(err);
+            });
+
+            archive.pipe(output);
+
+            // Add manifest.json
+            archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
+
+            // Add data.nt (the actual triples)
+            archive.append(triples || '', { name: 'data.nt' });
+
+            // Add a README for human readability
+            const readme = `LINDAS Cube Backup
+==================
+
+Cube: ${cubeUri}
+Version: ${version || 'N/A'}
+Graph: ${metadata.graphUri}
+Created: ${manifest.createdAt}
+Triples: ${metadata.tripleCount}
+
+Files in this archive:
+- manifest.json: Complete metadata and restore instructions
+- data.nt: The actual RDF triples in N-Triples format
+- README.txt: This file
+
+To restore this backup:
+1. Use the LINDAS Cube Manager "Import Backup" function
+2. Or manually POST data.nt to your triplestore's data endpoint
+
+Source Triplestore: ${manifest.source.triplestoreType}
+Source Endpoint: ${manifest.source.endpoint}
+Source Dataset: ${manifest.source.dataset || manifest.source.database || manifest.source.repository}
+`;
+            archive.append(readme, { name: 'README.txt' });
+
+            archive.finalize();
+
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+/**
+ * Parse a ZIP backup file and extract manifest and triples
+ */
+function parseZipBackup(zipPath) {
+    try {
+        const zip = new AdmZip(zipPath);
+        const entries = zip.getEntries();
+
+        let manifest = null;
+        let triples = null;
+
+        for (const entry of entries) {
+            if (entry.entryName === 'manifest.json') {
+                manifest = JSON.parse(entry.getData().toString('utf8'));
+            } else if (entry.entryName === 'data.nt') {
+                triples = entry.getData().toString('utf8');
+            }
+        }
+
+        if (!manifest || !triples) {
+            throw new Error('Invalid backup ZIP: missing manifest.json or data.nt');
+        }
+
+        return {
+            isPackage: true,
+            isZip: true,
+            packageVersion: manifest.formatVersion || '3.0',
+            metadata: {
+                cubeUri: manifest.cube?.uri,
+                baseCube: manifest.cube?.baseCube,
+                version: manifest.cube?.version,
+                cubeName: manifest.cube?.name,
+                cubeTitle: manifest.cube?.title,
+                graphUri: manifest.graph?.uri,
+                // Source information
+                sourceEndpoint: manifest.source?.endpoint,
+                sourceDataset: manifest.source?.dataset,
+                sourceDatabase: manifest.source?.database,
+                sourceRepository: manifest.source?.repository,
+                sourceType: manifest.source?.triplestoreType,
+                sourceMode: manifest.source?.triplestoreMode,
+                // Stats
+                tripleCount: manifest.stats?.tripleCount,
+                dataFileSize: manifest.stats?.dataFileSize,
+                backupId: manifest.stats?.backupId,
+                // Export info
+                createdAt: manifest.createdAt,
+                createdBy: manifest.createdBy
+            },
+            restore: manifest.restore,
+            triples: triples,
+            format: 'n-triples',
+            manifest: manifest
+        };
+    } catch (error) {
+        throw new Error(`Failed to parse ZIP backup: ${error.message}`);
+    }
+}
+
+/**
+ * Parse an import package to extract metadata and triples
+ * Supports ZIP (v3.0), JSON v2.0, JSON v1.0, and raw N-Triples formats
+ */
+function parseImportPackage(content, filePath = null) {
     try {
         // Try to parse as JSON export package
         const pkg = JSON.parse(content);
@@ -1679,17 +1890,47 @@ function cleanupOldBackups() {
     try {
         const files = fs.readdirSync(BACKUP_DIR);
         for (const file of files) {
-            if (file.endsWith('.json')) {
+            if (file.endsWith('.json') && !file.startsWith('temp_')) {
                 const filePath = path.join(BACKUP_DIR, file);
                 const stats = fs.statSync(filePath);
                 if (now - stats.mtimeMs > maxAge) {
+                    // Read metadata to get associated ZIP filename
+                    let zipFilename = null;
+                    try {
+                        const metadata = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                        zipFilename = metadata.zipFilename;
+                    } catch (e) {
+                        // Ignore parse errors
+                    }
+
                     // Delete the metadata file and its associated .nt file
                     fs.unlinkSync(filePath);
                     const ntFile = filePath.replace('.json', '.nt');
                     if (fs.existsSync(ntFile)) {
                         fs.unlinkSync(ntFile);
                     }
+
+                    // Delete associated ZIP file if exists
+                    if (zipFilename) {
+                        const zipFile = path.join(BACKUP_DIR, zipFilename);
+                        if (fs.existsSync(zipFile)) {
+                            fs.unlinkSync(zipFile);
+                        }
+                    }
+
                     console.log(`Cleaned up old backup: ${file}`);
+                }
+            }
+        }
+
+        // Also clean up orphaned ZIP files (older than maxAge)
+        for (const file of files) {
+            if (file.endsWith('.zip')) {
+                const filePath = path.join(BACKUP_DIR, file);
+                const stats = fs.statSync(filePath);
+                if (now - stats.mtimeMs > maxAge) {
+                    fs.unlinkSync(filePath);
+                    console.log(`Cleaned up orphaned ZIP: ${file}`);
                 }
             }
         }
@@ -1824,11 +2065,26 @@ app.post('/api/backup/create', async (req, res) => {
         };
         fs.writeFileSync(metaFilePath, JSON.stringify(metadata, null, 2));
 
+        // Also create a ZIP backup for easy export/restore
+        let zipInfo = null;
+        try {
+            zipInfo = await createZipBackup(triples, metadata);
+            metadata.zipFilename = zipInfo.zipFilename;
+            metadata.compressedSize = zipInfo.compressedSize;
+            // Update metadata file with ZIP info
+            fs.writeFileSync(metaFilePath, JSON.stringify(metadata, null, 2));
+        } catch (zipError) {
+            console.error('Failed to create ZIP backup:', zipError.message);
+            // Continue without ZIP - the .nt and .json files are still valid
+        }
+
         res.json({
             success: true,
             backupId: backupId,
             tripleCount: tripleCount,
-            expiresAt: metadata.expiresAt
+            expiresAt: metadata.expiresAt,
+            zipFilename: zipInfo?.zipFilename,
+            compressedSize: zipInfo?.compressedSize
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1844,7 +2100,7 @@ app.get('/api/backup/list', (req, res) => {
         const backups = [];
 
         for (const file of files) {
-            if (file.endsWith('.json')) {
+            if (file.endsWith('.json') && !file.startsWith('temp_')) {
                 const filePath = path.join(BACKUP_DIR, file);
                 const metadata = JSON.parse(fs.readFileSync(filePath, 'utf8'));
 
@@ -1853,6 +2109,21 @@ app.get('/api/backup/list', (req, res) => {
                 if (fs.existsSync(ntFile)) {
                     const stats = fs.statSync(ntFile);
                     metadata.fileSize = stats.size;
+
+                    // Check if ZIP file exists and add its size
+                    if (metadata.zipFilename) {
+                        const zipFile = path.join(BACKUP_DIR, metadata.zipFilename);
+                        if (fs.existsSync(zipFile)) {
+                            const zipStats = fs.statSync(zipFile);
+                            metadata.zipFileSize = zipStats.size;
+                            metadata.hasZip = true;
+                        } else {
+                            metadata.hasZip = false;
+                        }
+                    } else {
+                        metadata.hasZip = false;
+                    }
+
                     backups.push(metadata);
                 }
             }
@@ -1944,10 +2215,11 @@ app.post('/api/backup/restore', async (req, res) => {
     }
 });
 
-// Export backup as downloadable file with full metadata
-app.get('/api/backup/:backupId/export', (req, res) => {
+// Export backup as downloadable ZIP file with manifest and data
+app.get('/api/backup/:backupId/export', async (req, res) => {
     try {
         const { backupId } = req.params;
+        const { format } = req.query; // Optional: 'zip' (default) or 'json'
         const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
         const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
 
@@ -1958,10 +2230,32 @@ app.get('/api/backup/:backupId/export', (req, res) => {
         const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
         const triples = fs.readFileSync(ntFilePath, 'utf8');
 
-        // Create export package with all metadata for effortless restore
-        const exportPackage = createExportPackage(triples, metadata);
+        // Check if ZIP file already exists
+        if (format !== 'json' && metadata.zipFilename) {
+            const zipPath = path.join(BACKUP_DIR, metadata.zipFilename);
+            if (fs.existsSync(zipPath)) {
+                // Serve existing ZIP file
+                res.setHeader('Content-Type', 'application/zip');
+                res.setHeader('Content-Disposition', `attachment; filename="${metadata.zipFilename}"`);
+                return fs.createReadStream(zipPath).pipe(res);
+            }
+        }
 
-        // Set headers for file download
+        // Create ZIP on-the-fly if not exists or if explicitly requested
+        if (format !== 'json') {
+            try {
+                const zipInfo = await createZipBackup(triples, metadata);
+                res.setHeader('Content-Type', 'application/zip');
+                res.setHeader('Content-Disposition', `attachment; filename="${zipInfo.zipFilename}"`);
+                return fs.createReadStream(zipInfo.zipPath).pipe(res);
+            } catch (zipError) {
+                console.error('Failed to create ZIP, falling back to JSON:', zipError.message);
+                // Fall through to JSON export
+            }
+        }
+
+        // Fallback to JSON export (legacy format)
+        const exportPackage = createExportPackage(triples, metadata);
         const filename = `${backupId}_export.lindas.json`;
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -1971,15 +2265,26 @@ app.get('/api/backup/:backupId/export', (req, res) => {
     }
 });
 
-// Upload and import backup file
+// Upload and import backup file (supports ZIP and JSON formats)
 app.post('/api/backup/upload', upload.single('file'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
         }
 
-        const content = fs.readFileSync(req.file.path, 'utf8');
-        const parsed = parseImportPackage(content);
+        let parsed;
+        const isZip = req.file.originalname.endsWith('.zip') ||
+                      req.file.mimetype === 'application/zip' ||
+                      req.file.mimetype === 'application/x-zip-compressed';
+
+        if (isZip) {
+            // Parse ZIP backup file
+            parsed = parseZipBackup(req.file.path);
+        } else {
+            // Parse JSON or N-Triples content
+            const content = fs.readFileSync(req.file.path, 'utf8');
+            parsed = parseImportPackage(content);
+        }
 
         // Clean up uploaded file
         fs.unlinkSync(req.file.path);
@@ -1988,7 +2293,10 @@ app.post('/api/backup/upload', upload.single('file'), async (req, res) => {
         res.json({
             success: true,
             isPackage: parsed.isPackage,
+            isZip: parsed.isZip || false,
+            packageVersion: parsed.packageVersion,
             metadata: parsed.metadata,
+            restore: parsed.restore,
             tripleCount: parsed.triples.split('\n').filter(line => line.trim()).length,
             format: parsed.format,
             // Store triples temporarily for the actual import step
