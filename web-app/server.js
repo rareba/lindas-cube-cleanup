@@ -506,22 +506,61 @@ function createExportPackage(triples, metadata) {
  * - manifest.json: Complete metadata for identification and restore
  * - data.nt: The actual triples in N-Triples format
  */
-function createZipBackup(triples, metadata) {
+/**
+ * Create a self-contained ZIP backup that can contain one or more cubes
+ * @param {Array|Object} cubesData - Single cube data {triples, cubeUri, ...} or array of cube data
+ * @param {Object} metadata - Common metadata (graphUri, endpoint, etc.)
+ * @returns {Promise} Resolves with backup info
+ */
+function createZipBackup(cubesData, metadata) {
     return new Promise((resolve, reject) => {
         try {
-            // Parse cube URI to extract structured information
-            const cubeUri = metadata.cubeUri || '';
-            const versionMatch = cubeUri.match(/\/(\d+)\/?$/);
-            const version = versionMatch ? parseInt(versionMatch[1]) : null;
-            const baseCube = version !== null ? cubeUri.replace(/\/\d+\/?$/, '') : cubeUri;
+            // Normalize to array for consistent handling
+            const cubes = Array.isArray(cubesData) ? cubesData : [cubesData];
 
-            // Create manifest with all information needed for restore
+            // Build cube info array
+            const cubeInfos = cubes.map((cubeData, index) => {
+                const cubeUri = cubeData.cubeUri || metadata.cubeUri || '';
+                const triples = cubeData.triples || cubeData;
+                const versionMatch = cubeUri.match(/\/(\d+)\/?$/);
+                const version = versionMatch ? parseInt(versionMatch[1]) : null;
+                const baseCube = version !== null ? cubeUri.replace(/\/\d+\/?$/, '') : cubeUri;
+                const cubeName = cubeUri.split('/').slice(-2).join('/');
+                const dataFileName = cubes.length > 1 ? `data_${index + 1}.nt` : 'data.nt';
+                const tripleCount = typeof triples === 'string'
+                    ? triples.split('\n').filter(line => line.trim()).length
+                    : (cubeData.tripleCount || metadata.tripleCount || 0);
+
+                return {
+                    uri: cubeUri,
+                    baseCube: baseCube,
+                    version: version,
+                    name: cubeName,
+                    dataFile: dataFileName,
+                    tripleCount: tripleCount,
+                    dataFileSize: typeof triples === 'string' ? Buffer.byteLength(triples, 'utf8') : 0,
+                    triples: typeof triples === 'string' ? triples : ''
+                };
+            });
+
+            // Calculate totals
+            const totalTripleCount = cubeInfos.reduce((sum, c) => sum + c.tripleCount, 0);
+            const totalDataSize = cubeInfos.reduce((sum, c) => sum + c.dataFileSize, 0);
+
+            // Generate backup ID
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const backupId = cubes.length > 1
+                ? `multi_${cubes.length}cubes_${timestamp}`
+                : `${cubeInfos[0].uri.split('/').slice(-2).join('_')}_${timestamp}`;
+
+            // Create manifest with all information needed for restore (v4.0 format)
             const manifest = {
                 // Package metadata
-                formatVersion: '3.0',
+                formatVersion: '4.0',
                 formatType: 'lindas-cube-backup',
                 createdAt: new Date().toISOString(),
                 createdBy: 'LINDAS Cube Manager',
+                backupId: backupId,
 
                 // Source information (where the data came from)
                 source: {
@@ -533,42 +572,50 @@ function createZipBackup(triples, metadata) {
                     triplestoreMode: metadata.triplestoreMode || 'local'
                 },
 
-                // Cube identification
-                cube: {
-                    uri: cubeUri,
-                    baseCube: baseCube,
-                    version: version,
-                    name: metadata.cubeName || cubeUri.split('/').slice(-2).join('/'),
-                    title: metadata.title
-                },
-
                 // Graph information
                 graph: {
                     uri: metadata.graphUri,
-                    description: 'Named graph containing this cube'
+                    description: 'Named graph containing the cube(s)'
                 },
+
+                // Cubes array (v4.0 - supports multiple cubes)
+                cubes: cubeInfos.map(c => ({
+                    uri: c.uri,
+                    baseCube: c.baseCube,
+                    version: c.version,
+                    name: c.name,
+                    dataFile: c.dataFile,
+                    tripleCount: c.tripleCount
+                })),
+
+                // Backward compatibility: single cube info for v3.0 readers
+                cube: cubeInfos.length === 1 ? {
+                    uri: cubeInfos[0].uri,
+                    baseCube: cubeInfos[0].baseCube,
+                    version: cubeInfos[0].version,
+                    name: cubeInfos[0].name
+                } : undefined,
 
                 // Restore configuration
                 restore: {
                     targetGraph: metadata.graphUri,
                     recommendedEndpoint: metadata.endpoint,
                     recommendedDataset: metadata.dataset,
-                    dataFile: 'data.nt',
                     dataFormat: 'application/n-triples',
                     instructions: [
-                        'Extract this ZIP file',
                         'Use the LINDAS Cube Manager import function, or:',
-                        'For Fuseki: POST data.nt to /{dataset}/data?graph=<graphUri>',
-                        'For Stardog: POST data.nt to /{database}?graph=<graphUri>',
-                        'For GraphDB: POST data.nt to /repositories/{repo}/statements?context=<graphUri>'
+                        'For Fuseki: POST each data file to /{dataset}/data?graph=<graphUri>',
+                        'For Stardog: POST each data file to /{database}?graph=<graphUri>',
+                        'For GraphDB: POST each data file to /repositories/{repo}/statements?context=<graphUri>'
                     ]
                 },
 
                 // Statistics
                 stats: {
-                    tripleCount: metadata.tripleCount,
-                    dataFileSize: triples ? Buffer.byteLength(triples, 'utf8') : 0,
-                    backupId: metadata.backupId
+                    cubeCount: cubeInfos.length,
+                    totalTripleCount: totalTripleCount,
+                    totalDataSize: totalDataSize,
+                    backupId: backupId
                 },
 
                 // Deletion context (if this was a pre-deletion backup)
@@ -579,9 +626,7 @@ function createZipBackup(triples, metadata) {
             };
 
             // Generate ZIP filename
-            const cubeName = cubeUri.split('/').slice(-2).join('_').replace(/[^a-zA-Z0-9_-]/g, '_');
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const zipFilename = `${cubeName}_backup_${timestamp}.zip`;
+            const zipFilename = `backup_${backupId}.zip`;
             const zipPath = path.join(BACKUP_DIR, zipFilename);
 
             // Create ZIP archive
@@ -594,9 +639,10 @@ function createZipBackup(triples, metadata) {
                 resolve({
                     zipPath: zipPath,
                     zipFilename: zipFilename,
+                    backupId: backupId,
                     manifest: manifest,
                     compressedSize: archive.pointer(),
-                    uncompressedSize: manifest.stats.dataFileSize
+                    uncompressedSize: totalDataSize
                 });
             });
 
@@ -609,27 +655,32 @@ function createZipBackup(triples, metadata) {
             // Add manifest.json
             archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
 
-            // Add data.nt (the actual triples)
-            archive.append(triples || '', { name: 'data.nt' });
+            // Add data files for each cube
+            cubeInfos.forEach(cubeInfo => {
+                archive.append(cubeInfo.triples, { name: cubeInfo.dataFile });
+            });
 
             // Add a README for human readability
+            const cubeList = cubeInfos.map(c => `  - ${c.uri} (v${c.version || 'N/A'}, ${c.tripleCount} triples, ${c.dataFile})`).join('\n');
             const readme = `LINDAS Cube Backup
 ==================
 
-Cube: ${cubeUri}
-Version: ${version || 'N/A'}
 Graph: ${metadata.graphUri}
 Created: ${manifest.createdAt}
-Triples: ${metadata.tripleCount}
+Total Cubes: ${cubeInfos.length}
+Total Triples: ${totalTripleCount}
+
+Cubes in this backup:
+${cubeList}
 
 Files in this archive:
 - manifest.json: Complete metadata and restore instructions
-- data.nt: The actual RDF triples in N-Triples format
+${cubeInfos.map(c => `- ${c.dataFile}: RDF triples for ${c.name}`).join('\n')}
 - README.txt: This file
 
 To restore this backup:
 1. Use the LINDAS Cube Manager "Import Backup" function
-2. Or manually POST data.nt to your triplestore's data endpoint
+2. Or manually POST each data file to your triplestore's data endpoint
 
 Source Triplestore: ${manifest.source.triplestoreType}
 Source Endpoint: ${manifest.source.endpoint}
@@ -647,6 +698,7 @@ Source Dataset: ${manifest.source.dataset || manifest.source.database || manifes
 
 /**
  * Parse a ZIP backup file and extract manifest and triples
+ * Supports both single-cube (data.nt) and multi-cube (data_1.nt, data_2.nt, ...) backups
  */
 function parseZipBackup(zipPath) {
     try {
@@ -654,30 +706,49 @@ function parseZipBackup(zipPath) {
         const entries = zip.getEntries();
 
         let manifest = null;
-        let triples = null;
+        const dataFiles = {};
 
         for (const entry of entries) {
             if (entry.entryName === 'manifest.json') {
                 manifest = JSON.parse(entry.getData().toString('utf8'));
-            } else if (entry.entryName === 'data.nt') {
-                triples = entry.getData().toString('utf8');
+            } else if (entry.entryName.endsWith('.nt')) {
+                // Collect all .nt data files (data.nt or data_1.nt, data_2.nt, etc.)
+                dataFiles[entry.entryName] = entry.getData().toString('utf8');
             }
         }
 
-        if (!manifest || !triples) {
-            throw new Error('Invalid backup ZIP: missing manifest.json or data.nt');
+        if (!manifest) {
+            throw new Error('Invalid backup ZIP: missing manifest.json');
         }
+
+        // Combine all triples from data files
+        let allTriples = '';
+        const dataFileNames = Object.keys(dataFiles).sort();
+
+        if (dataFileNames.length === 0) {
+            throw new Error('Invalid backup ZIP: no data files found');
+        }
+
+        // For single-cube backups (data.nt) or multi-cube backups (data_N.nt)
+        for (const fileName of dataFileNames) {
+            if (allTriples) allTriples += '\n';
+            allTriples += dataFiles[fileName];
+        }
+
+        // Get cubes info from manifest (v4.0 format) or build from single cube (v3.0)
+        const cubes = manifest.cubes || (manifest.cube ? [manifest.cube] : []);
 
         return {
             isPackage: true,
             isZip: true,
             packageVersion: manifest.formatVersion || '3.0',
             metadata: {
-                cubeUri: manifest.cube?.uri,
-                baseCube: manifest.cube?.baseCube,
-                version: manifest.cube?.version,
-                cubeName: manifest.cube?.name,
-                cubeTitle: manifest.cube?.title,
+                // For multi-cube, use first cube as primary
+                cubeUri: manifest.cube?.uri || cubes[0]?.uri,
+                baseCube: manifest.cube?.baseCube || cubes[0]?.baseCube,
+                version: manifest.cube?.version || cubes[0]?.version,
+                cubeName: manifest.cube?.name || cubes[0]?.name,
+                cubeTitle: manifest.cube?.title || cubes[0]?.title,
                 graphUri: manifest.graph?.uri,
                 // Source information
                 sourceEndpoint: manifest.source?.endpoint,
@@ -687,17 +758,21 @@ function parseZipBackup(zipPath) {
                 sourceType: manifest.source?.triplestoreType,
                 sourceMode: manifest.source?.triplestoreMode,
                 // Stats
-                tripleCount: manifest.stats?.tripleCount,
-                dataFileSize: manifest.stats?.dataFileSize,
-                backupId: manifest.stats?.backupId,
+                tripleCount: manifest.stats?.totalTripleCount || manifest.stats?.tripleCount,
+                dataFileSize: manifest.stats?.totalDataSize || manifest.stats?.dataFileSize,
+                backupId: manifest.backupId || manifest.stats?.backupId,
                 // Export info
                 createdAt: manifest.createdAt,
                 createdBy: manifest.createdBy
             },
             restore: manifest.restore,
-            triples: triples,
+            triples: allTriples,
             format: 'n-triples',
-            manifest: manifest
+            manifest: manifest,
+            // Multi-cube support
+            cubes: cubes,
+            cubeCount: cubes.length,
+            dataFiles: dataFiles
         };
     } catch (error) {
         throw new Error(`Failed to parse ZIP backup: ${error.message}`);
@@ -1889,48 +1964,27 @@ function cleanupOldBackups() {
 
     try {
         const files = fs.readdirSync(BACKUP_DIR);
+
+        // Clean up old ZIP files (self-contained backups)
         for (const file of files) {
-            if (file.endsWith('.json') && !file.startsWith('temp_')) {
+            if (file.endsWith('.zip') && file.includes('_backup_')) {
                 const filePath = path.join(BACKUP_DIR, file);
                 const stats = fs.statSync(filePath);
                 if (now - stats.mtimeMs > maxAge) {
-                    // Read metadata to get associated ZIP filename
-                    let zipFilename = null;
-                    try {
-                        const metadata = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                        zipFilename = metadata.zipFilename;
-                    } catch (e) {
-                        // Ignore parse errors
-                    }
-
-                    // Delete the metadata file and its associated .nt file
                     fs.unlinkSync(filePath);
-                    const ntFile = filePath.replace('.json', '.nt');
-                    if (fs.existsSync(ntFile)) {
-                        fs.unlinkSync(ntFile);
-                    }
-
-                    // Delete associated ZIP file if exists
-                    if (zipFilename) {
-                        const zipFile = path.join(BACKUP_DIR, zipFilename);
-                        if (fs.existsSync(zipFile)) {
-                            fs.unlinkSync(zipFile);
-                        }
-                    }
-
                     console.log(`Cleaned up old backup: ${file}`);
                 }
             }
         }
 
-        // Also clean up orphaned ZIP files (older than maxAge)
+        // Also clean up any legacy .json and .nt files (older than maxAge)
         for (const file of files) {
-            if (file.endsWith('.zip')) {
+            if ((file.endsWith('.json') || file.endsWith('.nt')) && !file.startsWith('temp_')) {
                 const filePath = path.join(BACKUP_DIR, file);
                 const stats = fs.statSync(filePath);
                 if (now - stats.mtimeMs > maxAge) {
                     fs.unlinkSync(filePath);
-                    console.log(`Cleaned up orphaned ZIP: ${file}`);
+                    console.log(`Cleaned up legacy backup file: ${file}`);
                 }
             }
         }
@@ -2041,19 +2095,8 @@ app.post('/api/backup/create', async (req, res) => {
         const triples = await response.text();
         const tripleCount = triples.split('\n').filter(line => line.trim()).length;
 
-        // Generate backup ID and filename
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const cubeName = cubeUri.split('/').slice(-2).join('_');
-        const backupId = `${cubeName}_${timestamp}`;
-        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
-        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
-
-        // Save triples
-        fs.writeFileSync(ntFilePath, triples);
-
-        // Save metadata
+        // Generate backup metadata
         const metadata = {
-            backupId: backupId,
             cubeUri: cubeUri,
             graphUri: graphUri,
             endpoint: base,
@@ -2063,35 +2106,24 @@ app.post('/api/backup/create', async (req, res) => {
             createdAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
         };
-        fs.writeFileSync(metaFilePath, JSON.stringify(metadata, null, 2));
 
-        // Also create a ZIP backup for easy export/restore
-        let zipInfo = null;
-        try {
-            zipInfo = await createZipBackup(triples, metadata);
-            metadata.zipFilename = zipInfo.zipFilename;
-            metadata.compressedSize = zipInfo.compressedSize;
-            // Update metadata file with ZIP info
-            fs.writeFileSync(metaFilePath, JSON.stringify(metadata, null, 2));
-        } catch (zipError) {
-            console.error('Failed to create ZIP backup:', zipError.message);
-            // Continue without ZIP - the .nt and .json files are still valid
-        }
+        // Create self-contained ZIP backup (manifest inside ZIP)
+        const zipInfo = await createZipBackup(triples, metadata);
 
         res.json({
             success: true,
-            backupId: backupId,
+            backupId: zipInfo.backupId,
             tripleCount: tripleCount,
             expiresAt: metadata.expiresAt,
-            zipFilename: zipInfo?.zipFilename,
-            compressedSize: zipInfo?.compressedSize
+            zipFilename: zipInfo.zipFilename,
+            zipFileSize: zipInfo.compressedSize
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// List all backups
+// List all backups (reads from self-contained ZIP files)
 app.get('/api/backup/list', (req, res) => {
     try {
         cleanupOldBackups(); // Clean up before listing
@@ -2100,31 +2132,42 @@ app.get('/api/backup/list', (req, res) => {
         const backups = [];
 
         for (const file of files) {
-            if (file.endsWith('.json') && !file.startsWith('temp_')) {
-                const filePath = path.join(BACKUP_DIR, file);
-                const metadata = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            // Only process ZIP files (self-contained backups)
+            // Files are named: backup_${backupId}.zip
+            if (file.endsWith('.zip') && file.startsWith('backup_')) {
+                const zipPath = path.join(BACKUP_DIR, file);
+                try {
+                    // Read manifest from inside ZIP
+                    const zip = new AdmZip(zipPath);
+                    const manifestEntry = zip.getEntry('manifest.json');
+                    if (manifestEntry) {
+                        const manifest = JSON.parse(manifestEntry.getData().toString('utf8'));
+                        const stats = fs.statSync(zipPath);
 
-                // Check if the .nt file exists
-                const ntFile = filePath.replace('.json', '.nt');
-                if (fs.existsSync(ntFile)) {
-                    const stats = fs.statSync(ntFile);
-                    metadata.fileSize = stats.size;
+                        // Build backup info from manifest
+                        const backupInfo = {
+                            backupId: manifest.backupId || manifest.stats?.backupId || file.replace('.zip', ''),
+                            cubeUri: manifest.cube?.uri || (manifest.cubes && manifest.cubes[0]?.uri) || '',
+                            graphUri: manifest.graph?.uri || '',
+                            endpoint: manifest.source?.endpoint || '',
+                            dataset: manifest.source?.dataset || '',
+                            type: manifest.source?.triplestoreType || 'fuseki',
+                            tripleCount: manifest.stats?.totalTripleCount || manifest.cube?.tripleCount || 0,
+                            createdAt: manifest.createdAt || stats.birthtime.toISOString(),
+                            expiresAt: manifest.expiresAt || new Date(stats.birthtime.getTime() + BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+                            zipFilename: file,
+                            zipFileSize: stats.size,
+                            hasZip: true,
+                            formatVersion: manifest.formatVersion || '3.0',
+                            // Multi-cube support
+                            cubes: manifest.cubes || (manifest.cube ? [manifest.cube] : []),
+                            cubeCount: manifest.stats?.cubeCount || (manifest.cubes?.length) || 1
+                        };
 
-                    // Check if ZIP file exists and add its size
-                    if (metadata.zipFilename) {
-                        const zipFile = path.join(BACKUP_DIR, metadata.zipFilename);
-                        if (fs.existsSync(zipFile)) {
-                            const zipStats = fs.statSync(zipFile);
-                            metadata.zipFileSize = zipStats.size;
-                            metadata.hasZip = true;
-                        } else {
-                            metadata.hasZip = false;
-                        }
-                    } else {
-                        metadata.hasZip = false;
+                        backups.push(backupInfo);
                     }
-
-                    backups.push(metadata);
+                } catch (zipError) {
+                    console.error(`Failed to read backup ${file}:`, zipError.message);
                 }
             }
         }
@@ -2138,23 +2181,48 @@ app.get('/api/backup/list', (req, res) => {
     }
 });
 
-// Get backup details
+// Get backup details (reads from self-contained ZIP file)
 app.get('/api/backup/:backupId', (req, res) => {
     try {
         const { backupId } = req.params;
-        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
 
-        if (!fs.existsSync(metaFilePath)) {
+        // Find the ZIP file for this backup
+        const files = fs.readdirSync(BACKUP_DIR);
+        const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
+
+        if (!zipFile) {
             return res.status(404).json({ error: 'Backup not found' });
         }
 
-        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+        const zipPath = path.join(BACKUP_DIR, zipFile);
+        const zip = new AdmZip(zipPath);
+        const manifestEntry = zip.getEntry('manifest.json');
 
-        if (fs.existsSync(ntFilePath)) {
-            const stats = fs.statSync(ntFilePath);
-            metadata.fileSize = stats.size;
+        if (!manifestEntry) {
+            return res.status(500).json({ error: 'Invalid backup: missing manifest' });
         }
+
+        const manifest = JSON.parse(manifestEntry.getData().toString('utf8'));
+        const stats = fs.statSync(zipPath);
+
+        // Build response with all backup details
+        const metadata = {
+            backupId: manifest.backupId || backupId,
+            cubeUri: manifest.cube?.uri || (manifest.cubes && manifest.cubes[0]?.uri) || '',
+            graphUri: manifest.graph?.uri || '',
+            endpoint: manifest.source?.endpoint || '',
+            dataset: manifest.source?.dataset || '',
+            type: manifest.source?.triplestoreType || 'fuseki',
+            tripleCount: manifest.stats?.totalTripleCount || manifest.cube?.tripleCount || 0,
+            createdAt: manifest.createdAt || stats.birthtime.toISOString(),
+            expiresAt: manifest.expiresAt,
+            zipFilename: zipFile,
+            zipFileSize: stats.size,
+            formatVersion: manifest.formatVersion || '3.0',
+            cubes: manifest.cubes || (manifest.cube ? [manifest.cube] : []),
+            cubeCount: manifest.stats?.cubeCount || 1,
+            restore: manifest.restore
+        };
 
         res.json(metadata);
     } catch (error) {
@@ -2162,32 +2230,67 @@ app.get('/api/backup/:backupId', (req, res) => {
     }
 });
 
-// Restore from backup
+// Restore from backup (reads from self-contained ZIP file)
 app.post('/api/backup/restore', async (req, res) => {
     try {
         const { backupId, endpoint, baseUrl, dataset, database, repository, username, password, type } = req.body;
-        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
-        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
 
-        if (!fs.existsSync(metaFilePath) || !fs.existsSync(ntFilePath)) {
+        // Find the ZIP file for this backup
+        const files = fs.readdirSync(BACKUP_DIR);
+        const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
+
+        if (!zipFile) {
             return res.status(404).json({ error: 'Backup not found' });
         }
 
-        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-        const triples = fs.readFileSync(ntFilePath, 'utf8');
+        const zipPath = path.join(BACKUP_DIR, zipFile);
+        const zip = new AdmZip(zipPath);
 
-        // Use provided values or fall back to metadata
-        const base = endpoint || baseUrl || metadata.endpoint;
-        const db = dataset || database || repository || metadata.dataset;
-        const triplestoreType = type || metadata.type || 'fuseki';
+        // Read manifest
+        const manifestEntry = zip.getEntry('manifest.json');
+        if (!manifestEntry) {
+            return res.status(500).json({ error: 'Invalid backup: missing manifest' });
+        }
+        const manifest = JSON.parse(manifestEntry.getData().toString('utf8'));
+
+        // Read triples (support both single and multi-cube formats)
+        let triples = '';
+        let totalTripleCount = 0;
+
+        if (manifest.cubes && manifest.cubes.length > 0) {
+            // Multi-cube format: read all data files
+            for (const cube of manifest.cubes) {
+                const dataEntry = zip.getEntry(cube.dataFile || 'data.nt');
+                if (dataEntry) {
+                    triples += dataEntry.getData().toString('utf8') + '\n';
+                    totalTripleCount += cube.tripleCount || 0;
+                }
+            }
+        } else {
+            // Single cube format
+            const dataEntry = zip.getEntry('data.nt');
+            if (!dataEntry) {
+                return res.status(500).json({ error: 'Invalid backup: missing data file' });
+            }
+            triples = dataEntry.getData().toString('utf8');
+            totalTripleCount = manifest.cube?.tripleCount || manifest.stats?.totalTripleCount || 0;
+        }
+
+        // Use provided values or fall back to manifest
+        const base = endpoint || baseUrl || manifest.source?.endpoint || '';
+        const db = dataset || database || repository || manifest.source?.dataset || '';
+        const triplestoreType = type || manifest.source?.triplestoreType || 'fuseki';
+        const graphUri = manifest.graph?.uri || manifest.restore?.targetGraph || '';
         const auth = { username, password };
 
         // Construct triplestore-specific data endpoint
         let dataEndpoint;
         if (triplestoreType === 'graphdb') {
-            dataEndpoint = `${base}/repositories/${db}/statements?context=${encodeURIComponent('<' + metadata.graphUri + '>')}`;
+            dataEndpoint = `${base}/repositories/${db}/statements?context=${encodeURIComponent('<' + graphUri + '>')}`;
+        } else if (triplestoreType === 'stardog') {
+            dataEndpoint = `${base}/${db}?graph=${encodeURIComponent(graphUri)}`;
         } else {
-            dataEndpoint = `${base}/${db}/data?graph=${encodeURIComponent(metadata.graphUri)}`;
+            dataEndpoint = `${base}/${db}/data?graph=${encodeURIComponent(graphUri)}`;
         }
 
         const response = await fetch(dataEndpoint, {
@@ -2206,60 +2309,35 @@ app.post('/api/backup/restore', async (req, res) => {
 
         res.json({
             success: true,
-            restoredTriples: metadata.tripleCount,
-            cubeUri: metadata.cubeUri,
-            graphUri: metadata.graphUri
+            restoredTriples: totalTripleCount,
+            cubeUri: manifest.cube?.uri || (manifest.cubes && manifest.cubes[0]?.uri) || '',
+            graphUri: graphUri,
+            cubeCount: manifest.cubes?.length || 1
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// Export backup as downloadable ZIP file with manifest and data
+// Export backup as downloadable ZIP file (self-contained with manifest and data)
 app.get('/api/backup/:backupId/export', async (req, res) => {
     try {
         const { backupId } = req.params;
-        const { format } = req.query; // Optional: 'zip' (default) or 'json'
-        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
-        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
 
-        if (!fs.existsSync(metaFilePath) || !fs.existsSync(ntFilePath)) {
+        // Find the ZIP file for this backup
+        const files = fs.readdirSync(BACKUP_DIR);
+        const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
+
+        if (!zipFile) {
             return res.status(404).json({ error: 'Backup not found' });
         }
 
-        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-        const triples = fs.readFileSync(ntFilePath, 'utf8');
+        const zipPath = path.join(BACKUP_DIR, zipFile);
 
-        // Check if ZIP file already exists
-        if (format !== 'json' && metadata.zipFilename) {
-            const zipPath = path.join(BACKUP_DIR, metadata.zipFilename);
-            if (fs.existsSync(zipPath)) {
-                // Serve existing ZIP file
-                res.setHeader('Content-Type', 'application/zip');
-                res.setHeader('Content-Disposition', `attachment; filename="${metadata.zipFilename}"`);
-                return fs.createReadStream(zipPath).pipe(res);
-            }
-        }
-
-        // Create ZIP on-the-fly if not exists or if explicitly requested
-        if (format !== 'json') {
-            try {
-                const zipInfo = await createZipBackup(triples, metadata);
-                res.setHeader('Content-Type', 'application/zip');
-                res.setHeader('Content-Disposition', `attachment; filename="${zipInfo.zipFilename}"`);
-                return fs.createReadStream(zipInfo.zipPath).pipe(res);
-            } catch (zipError) {
-                console.error('Failed to create ZIP, falling back to JSON:', zipError.message);
-                // Fall through to JSON export
-            }
-        }
-
-        // Fallback to JSON export (legacy format)
-        const exportPackage = createExportPackage(triples, metadata);
-        const filename = `${backupId}_export.lindas.json`;
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.json(exportPackage);
+        // Serve the self-contained ZIP file
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${zipFile}"`);
+        return fs.createReadStream(zipPath).pipe(res);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -2385,7 +2463,7 @@ app.post('/api/backup/import', async (req, res) => {
     }
 });
 
-// Restore backup to any triplestore (multi-triplestore aware)
+// Restore backup to a specified triplestore (reads from self-contained ZIP)
 app.post('/api/backup/restore-to', async (req, res) => {
     try {
         const {
@@ -2394,18 +2472,49 @@ app.post('/api/backup/restore-to', async (req, res) => {
             graphUri
         } = req.body;
 
-        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
-        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
+        // Find the ZIP file for this backup
+        const files = fs.readdirSync(BACKUP_DIR);
+        const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
 
-        if (!fs.existsSync(metaFilePath) || !fs.existsSync(ntFilePath)) {
+        if (!zipFile) {
             return res.status(404).json({ error: 'Backup not found' });
         }
 
-        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-        const triples = fs.readFileSync(ntFilePath, 'utf8');
+        const zipPath = path.join(BACKUP_DIR, zipFile);
+        const zip = new AdmZip(zipPath);
 
-        // Use provided graph or original
-        const targetGraph = graphUri || metadata.graphUri;
+        // Read manifest
+        const manifestEntry = zip.getEntry('manifest.json');
+        if (!manifestEntry) {
+            return res.status(500).json({ error: 'Invalid backup: missing manifest' });
+        }
+        const manifest = JSON.parse(manifestEntry.getData().toString('utf8'));
+
+        // Read triples (support both single and multi-cube formats)
+        let triples = '';
+        let totalTripleCount = 0;
+
+        if (manifest.cubes && manifest.cubes.length > 0) {
+            // Multi-cube format: read all data files
+            for (const cube of manifest.cubes) {
+                const dataEntry = zip.getEntry(cube.dataFile || 'data.nt');
+                if (dataEntry) {
+                    triples += dataEntry.getData().toString('utf8') + '\n';
+                    totalTripleCount += cube.tripleCount || 0;
+                }
+            }
+        } else {
+            // Single cube format
+            const dataEntry = zip.getEntry('data.nt');
+            if (!dataEntry) {
+                return res.status(500).json({ error: 'Invalid backup: missing data file' });
+            }
+            triples = dataEntry.getData().toString('utf8');
+            totalTripleCount = manifest.cube?.tripleCount || manifest.stats?.totalTripleCount || 0;
+        }
+
+        // Use provided graph or original from manifest
+        const targetGraph = graphUri || manifest.graph?.uri || manifest.restore?.targetGraph || '';
 
         // Import to specified triplestore
         const config = { type: type || 'fuseki', mode: mode || 'local', baseUrl, dataset, database, repository, username, password };
@@ -2413,32 +2522,31 @@ app.post('/api/backup/restore-to', async (req, res) => {
 
         res.json({
             success: true,
-            restoredTriples: metadata.tripleCount,
-            cubeUri: metadata.cubeUri,
-            graphUri: targetGraph
+            restoredTriples: totalTripleCount,
+            cubeUri: manifest.cube?.uri || (manifest.cubes && manifest.cubes[0]?.uri) || '',
+            graphUri: targetGraph,
+            cubeCount: manifest.cubes?.length || 1
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// Delete a backup
+// Delete a backup (deletes self-contained ZIP file)
 app.delete('/api/backup/:backupId', (req, res) => {
     try {
         const { backupId } = req.params;
-        const metaFilePath = path.join(BACKUP_DIR, `${backupId}.json`);
-        const ntFilePath = path.join(BACKUP_DIR, `${backupId}.nt`);
 
-        if (!fs.existsSync(metaFilePath)) {
+        // Find the ZIP file for this backup
+        const files = fs.readdirSync(BACKUP_DIR);
+        const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
+
+        if (!zipFile) {
             return res.status(404).json({ error: 'Backup not found' });
         }
 
-        if (fs.existsSync(metaFilePath)) {
-            fs.unlinkSync(metaFilePath);
-        }
-        if (fs.existsSync(ntFilePath)) {
-            fs.unlinkSync(ntFilePath);
-        }
+        const zipPath = path.join(BACKUP_DIR, zipFile);
+        fs.unlinkSync(zipPath);
 
         res.json({ success: true, message: 'Backup deleted' });
     } catch (error) {
