@@ -72,3 +72,78 @@ backup_multi_3cubes_2026-01-20T12-00-00-000Z.zip
 ## Summary
 
 The backup size display bug was caused by a mismatch between the expected filename pattern and the actual filename format. The fix ensures all `backup_*.zip` files are correctly recognized and their sizes are displayed in the UI.
+
+---
+
+# Multi-Cube Backup with Selective Restore
+
+## Overview
+
+Enhanced the backup system to support multi-cube backups with selective restore functionality. Users can now:
+1. Create backups containing multiple cubes in a single ZIP file
+2. When restoring, choose to restore all cubes or a subset
+
+## Implementation Details
+
+### Server-Side (server.js)
+
+**`/api/backup/restore-to` endpoint**:
+- Added `selectedCubes` parameter (array of cube URIs)
+- If `selectedCubes` is provided, only those cubes are restored
+- If `selectedCubes` is empty or not provided, all cubes are restored
+- Response includes `restoredCubes` array with details of what was restored
+
+### Client-Side (app.js)
+
+**`selectBackup()` function**:
+- Detects multi-cube backups (backup.cubes.length > 1)
+- For multi-cube backups, displays:
+  - "Select all / Deselect all" checkbox
+  - List of cubes with individual checkboxes
+  - Each cube shows name and triple count
+- Initializes `state.selectedCubesToRestore` with all cubes selected by default
+
+**`updateSelectedCubes()` function**:
+- Updates `state.selectedCubesToRestore` when checkboxes change
+- Handles "Select All" checkbox state (checked, unchecked, indeterminate)
+
+**`restoreBackup()` function**:
+- Validates that at least one cube is selected
+- Passes `selectedCubes` array to the API
+- Shows detailed result: "Restored X cube(s) of Y (Z triples)"
+
+### CSS (styles.css)
+
+Added styles for:
+- `.backup-cubes-section` - Container for cube selection
+- `.cube-select-all` - Select all checkbox container
+- `.cubes-list` - Scrollable list of cubes (max-height: 200px)
+- `.cube-item` - Individual cube row with hover state
+- `.cube-checkbox` - Checkbox styling
+
+## ZIP Format (v4.0)
+
+Multi-cube backups use the v4.0 manifest format:
+
+```json
+{
+  "formatVersion": "4.0",
+  "backupId": "multi_3cubes_2026-01-20T12-00-00-000Z",
+  "cubes": [
+    { "uri": "...", "name": "...", "dataFile": "data_1.nt", "tripleCount": 100 },
+    { "uri": "...", "name": "...", "dataFile": "data_2.nt", "tripleCount": 200 },
+    { "uri": "...", "name": "...", "dataFile": "data_3.nt", "tripleCount": 150 }
+  ],
+  "stats": {
+    "cubeCount": 3,
+    "totalTripleCount": 450,
+    "totalDataSize": 12345
+  }
+}
+```
+
+## Files Modified
+
+- `web-app/server.js`: Selective restore in `/api/backup/restore-to`
+- `web-app/public/app.js`: UI for cube selection
+- `web-app/public/styles.css`: Styles for cube selection UI

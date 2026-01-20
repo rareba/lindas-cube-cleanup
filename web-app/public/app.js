@@ -68,6 +68,7 @@ const state = {
     // Backups
     backups: [],
     selectedBackupId: null,
+    selectedCubesToRestore: [], // For selective restore of multi-cube backups
     uploadedFileData: null
 };
 
@@ -2185,14 +2186,19 @@ async function loadBackupList() {
         state.backups.forEach(backup => {
             const div = document.createElement('div');
             div.className = 'backup-item';
-            div.dataset.backupId = backup.id;
+            div.dataset.backupId = backup.backupId;
 
             const infoDiv = document.createElement('div');
             infoDiv.className = 'backup-info';
 
             const title = document.createElement('div');
             title.className = 'backup-title';
-            title.textContent = getShortUri(backup.cubeUri);
+            // Support multi-cube backups
+            if (backup.cubes && backup.cubes.length > 1) {
+                title.textContent = `${backup.cubes.length} cubes`;
+            } else {
+                title.textContent = getShortUri(backup.cubeUri || (backup.cubes && backup.cubes[0]?.uri));
+            }
             infoDiv.appendChild(title);
 
             const meta = document.createElement('div');
@@ -2204,10 +2210,12 @@ async function loadBackupList() {
 
             const sizeSpan = document.createElement('div');
             sizeSpan.className = 'backup-size';
-            sizeSpan.textContent = formatBytes(backup.size);
+            // Use zipFileSize if available, otherwise fileSize
+            const size = backup.zipFileSize || backup.fileSize || 0;
+            sizeSpan.textContent = formatBytes(size);
             div.appendChild(sizeSpan);
 
-            div.addEventListener('click', () => selectBackup(backup.id));
+            div.addEventListener('click', () => selectBackup(backup.backupId));
             listContainer.appendChild(div);
         });
 
@@ -2222,6 +2230,7 @@ async function loadBackupList() {
 
 function selectBackup(backupId) {
     state.selectedBackupId = backupId;
+    state.selectedCubesToRestore = []; // Reset cube selection
 
     // Update selection UI
     const items = document.querySelectorAll('.backup-item');
@@ -2235,16 +2244,25 @@ function selectBackup(backupId) {
 
     if (previewCard) previewCard.style.display = 'block';
 
-    const backup = state.backups.find(b => b.id === backupId);
+    const backup = state.backups.find(b => b.backupId === backupId);
     if (previewInfo && backup) {
         clearElement(previewInfo);
 
+        const size = backup.zipFileSize || backup.fileSize || 0;
+        const hasMutipleCubes = backup.cubes && backup.cubes.length > 1;
+
+        // Basic info fields
         const fields = [
-            { label: 'Cube', value: backup.cubeUri },
             { label: 'Graph', value: backup.graphUri },
             { label: 'Created', value: new Date(backup.createdAt).toLocaleString() },
-            { label: 'Size', value: formatBytes(backup.size) }
+            { label: 'Size', value: formatBytes(size) }
         ];
+
+        // Show cube info (simple version for single cube)
+        if (!hasMutipleCubes) {
+            const cubeValue = backup.cubeUri || (backup.cubes && backup.cubes[0]?.uri) || '';
+            fields.unshift({ label: 'Cube', value: cubeValue });
+        }
 
         fields.forEach(field => {
             const p = document.createElement('p');
@@ -2254,12 +2272,101 @@ function selectBackup(backupId) {
             p.appendChild(document.createTextNode(field.value));
             previewInfo.appendChild(p);
         });
+
+        // For multi-cube backups, show a list with checkboxes for selective restore
+        if (hasMutipleCubes) {
+            const cubesSection = document.createElement('div');
+            cubesSection.className = 'backup-cubes-section';
+
+            const cubesHeader = document.createElement('p');
+            const cubesHeaderStrong = document.createElement('strong');
+            cubesHeaderStrong.textContent = 'Cubes in this backup (' + backup.cubes.length + '):';
+            cubesHeader.appendChild(cubesHeaderStrong);
+            cubesSection.appendChild(cubesHeader);
+
+            const selectAllDiv = document.createElement('div');
+            selectAllDiv.className = 'cube-select-all';
+            const selectAllCheckbox = document.createElement('input');
+            selectAllCheckbox.type = 'checkbox';
+            selectAllCheckbox.id = 'select-all-cubes';
+            selectAllCheckbox.checked = true;
+            selectAllCheckbox.addEventListener('change', (e) => {
+                const cubeCheckboxes = document.querySelectorAll('.cube-checkbox');
+                cubeCheckboxes.forEach(cb => {
+                    cb.checked = e.target.checked;
+                });
+                updateSelectedCubes();
+            });
+            const selectAllLabel = document.createElement('label');
+            selectAllLabel.htmlFor = 'select-all-cubes';
+            selectAllLabel.textContent = ' Select all / Deselect all';
+            selectAllDiv.appendChild(selectAllCheckbox);
+            selectAllDiv.appendChild(selectAllLabel);
+            cubesSection.appendChild(selectAllDiv);
+
+            const cubesList = document.createElement('div');
+            cubesList.className = 'cubes-list';
+
+            backup.cubes.forEach((cube, index) => {
+                const cubeDiv = document.createElement('div');
+                cubeDiv.className = 'cube-item';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'cube-checkbox';
+                checkbox.id = 'cube-' + index;
+                checkbox.value = cube.uri;
+                checkbox.checked = true; // Selected by default
+                checkbox.addEventListener('change', updateSelectedCubes);
+
+                const label = document.createElement('label');
+                label.htmlFor = 'cube-' + index;
+                const cubeName = cube.name || cube.uri.split('/').pop();
+                const tripleInfo = cube.tripleCount ? ' (' + cube.tripleCount + ' triples)' : '';
+                label.textContent = ' ' + cubeName + tripleInfo;
+
+                cubeDiv.appendChild(checkbox);
+                cubeDiv.appendChild(label);
+                cubesList.appendChild(cubeDiv);
+            });
+
+            cubesSection.appendChild(cubesList);
+            previewInfo.appendChild(cubesSection);
+
+            // Initialize selected cubes to all cubes
+            state.selectedCubesToRestore = backup.cubes.map(c => c.uri);
+        } else {
+            // Single cube backup - select it by default
+            const cubeUri = backup.cubeUri || (backup.cubes && backup.cubes[0]?.uri);
+            if (cubeUri) {
+                state.selectedCubesToRestore = [cubeUri];
+            }
+        }
+    }
+}
+
+function updateSelectedCubes() {
+    const checkboxes = document.querySelectorAll('.cube-checkbox:checked');
+    state.selectedCubesToRestore = Array.from(checkboxes).map(cb => cb.value);
+
+    // Update "Select All" checkbox state
+    const allCheckboxes = document.querySelectorAll('.cube-checkbox');
+    const selectAllCheckbox = document.getElementById('select-all-cubes');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = checkboxes.length === allCheckboxes.length;
+        selectAllCheckbox.indeterminate = checkboxes.length > 0 && checkboxes.length < allCheckboxes.length;
     }
 }
 
 async function restoreBackup() {
     if (!state.selectedBackupId) {
         alert('Please select a backup first');
+        return;
+    }
+
+    // Check if any cubes are selected for multi-cube backups
+    if (state.selectedCubesToRestore.length === 0) {
+        alert('Please select at least one cube to restore');
         return;
     }
 
@@ -2280,7 +2387,8 @@ async function restoreBackup() {
             body: JSON.stringify({
                 ...config,
                 backupId: state.selectedBackupId,
-                targetGraph: targetGraph
+                targetGraph: targetGraph,
+                selectedCubes: state.selectedCubesToRestore // Pass selected cubes for selective restore
             })
         });
 
@@ -2291,7 +2399,17 @@ async function restoreBackup() {
         }
 
         if (progressFill) progressFill.style.width = '100%';
-        if (statusEl) statusEl.textContent = 'Backup restored successfully!';
+
+        // Show detailed restore result
+        const cubeCount = result.cubeCount || 1;
+        const totalInBackup = result.totalCubesInBackup || 1;
+        const tripleCount = result.restoredTriples || 0;
+        let message = 'Restored ' + cubeCount + ' cube(s)';
+        if (totalInBackup > cubeCount) {
+            message += ' of ' + totalInBackup;
+        }
+        message += ' (' + tripleCount.toLocaleString() + ' triples)';
+        if (statusEl) statusEl.textContent = message;
 
     } catch (error) {
         if (statusEl) statusEl.textContent = 'Restore failed: ' + error.message;

@@ -2464,12 +2464,14 @@ app.post('/api/backup/import', async (req, res) => {
 });
 
 // Restore backup to a specified triplestore (reads from self-contained ZIP)
+// Supports selective restore: pass selectedCubes array with cube URIs to restore only specific cubes
 app.post('/api/backup/restore-to', async (req, res) => {
     try {
         const {
             backupId,
             type, mode, baseUrl, dataset, database, repository, username, password,
-            graphUri
+            graphUri,
+            selectedCubes // Optional: array of cube URIs to restore (if empty, restore all)
         } = req.body;
 
         // Find the ZIP file for this backup
@@ -2493,14 +2495,24 @@ app.post('/api/backup/restore-to', async (req, res) => {
         // Read triples (support both single and multi-cube formats)
         let triples = '';
         let totalTripleCount = 0;
+        let restoredCubes = [];
 
         if (manifest.cubes && manifest.cubes.length > 0) {
-            // Multi-cube format: read all data files
-            for (const cube of manifest.cubes) {
+            // Multi-cube format: read selected data files or all if none specified
+            const cubesToRestore = selectedCubes && selectedCubes.length > 0
+                ? manifest.cubes.filter(c => selectedCubes.includes(c.uri))
+                : manifest.cubes;
+
+            for (const cube of cubesToRestore) {
                 const dataEntry = zip.getEntry(cube.dataFile || 'data.nt');
                 if (dataEntry) {
                     triples += dataEntry.getData().toString('utf8') + '\n';
                     totalTripleCount += cube.tripleCount || 0;
+                    restoredCubes.push({
+                        uri: cube.uri,
+                        name: cube.name,
+                        tripleCount: cube.tripleCount
+                    });
                 }
             }
         } else {
@@ -2511,6 +2523,15 @@ app.post('/api/backup/restore-to', async (req, res) => {
             }
             triples = dataEntry.getData().toString('utf8');
             totalTripleCount = manifest.cube?.tripleCount || manifest.stats?.totalTripleCount || 0;
+            restoredCubes.push({
+                uri: manifest.cube?.uri,
+                name: manifest.cube?.name,
+                tripleCount: totalTripleCount
+            });
+        }
+
+        if (triples.trim().length === 0) {
+            return res.status(400).json({ error: 'No cubes selected or no data found for selected cubes' });
         }
 
         // Use provided graph or original from manifest
@@ -2525,7 +2546,9 @@ app.post('/api/backup/restore-to', async (req, res) => {
             restoredTriples: totalTripleCount,
             cubeUri: manifest.cube?.uri || (manifest.cubes && manifest.cubes[0]?.uri) || '',
             graphUri: targetGraph,
-            cubeCount: manifest.cubes?.length || 1
+            cubeCount: restoredCubes.length,
+            totalCubesInBackup: manifest.cubes?.length || 1,
+            restoredCubes: restoredCubes
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
