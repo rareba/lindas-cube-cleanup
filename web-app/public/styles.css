@@ -348,12 +348,14 @@ a:hover {
     border-radius: 20px;
 }
 
-.mode-badge.offline {
+.mode-badge.offline,
+.mode-badge.dryrun {
     background: var(--success-light);
     color: var(--success-color);
 }
 
-.mode-badge.online {
+.mode-badge.online,
+.mode-badge.execute {
     background: var(--warning-light);
     color: var(--warning-color);
     animation: pulse 2s infinite;
@@ -1187,6 +1189,69 @@ table.data-table {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.selection-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--bg-elevated);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    border: 1px solid var(--border-color);
+}
+
+.select-all-label {
+    font-weight: 600;
+}
+
+.selected-count {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.cube-row {
+    display: flex;
+    align-items: flex-start;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: var(--bg-card);
+}
+
+.cube-row:hover {
+    background: var(--bg-elevated);
+}
+
+.cube-checkbox {
+    margin-right: 12px;
+    margin-top: 4px;
+}
+
+.cube-info {
+    flex: 1;
+}
+
+.cube-name {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.cube-versions {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.cube-versions .to-delete {
+    color: var(--danger-color);
+    font-weight: 500;
+}
+
+.cube-versions .to-keep {
+    color: var(--success-color);
+    font-weight: 500;
 }
 
 .badge {

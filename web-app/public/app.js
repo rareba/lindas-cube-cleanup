@@ -28,7 +28,7 @@ const LINDAS_ENVIRONMENTS = {
 
 // Application State
 const state = {
-    mode: 'offline', // 'offline' or 'online'
+    mode: 'dryrun', // 'dryrun' or 'execute'
     triplestoreType: 'fuseki',
     connectionMode: 'local', // 'local' or 'remote'
     connected: false,
@@ -53,6 +53,7 @@ const state = {
     cubesToDelete: [],
     cubesToKeep: [],
     versionsToKeep: 2, // Number of newest versions to keep (configurable)
+    selectedCubesForDeletion: new Set(), // Tracks which cubes are selected for deletion (base URIs)
 
     // Deletion results
     deletionResults: {
@@ -207,23 +208,12 @@ function setMode(mode) {
     const modeButtons = document.querySelectorAll('.mode-btn');
     modeButtons.forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === mode);
-        if (btn.dataset.mode === 'online' && mode === 'online') {
-            btn.classList.add('online');
+        if (btn.dataset.mode === 'execute' && mode === 'execute') {
+            btn.classList.add('execute');
         } else {
-            btn.classList.remove('online');
+            btn.classList.remove('execute');
         }
     });
-
-    // In Online mode, force remote connection
-    // In Offline mode, allow user to choose local or remote (e.g., Stardog Cloud as working copy)
-    const connectionMode = document.getElementById('connection-mode');
-    if (connectionMode) {
-        if (mode === 'online') {
-            connectionMode.value = 'remote';
-            state.connectionMode = 'remote';
-        }
-        // In offline mode, keep the current selection (user's choice)
-    }
 
     updateModeUI();
     updateConnectionUI();
@@ -235,9 +225,9 @@ function updateModeUI() {
     // Update header mode badge
     const modeBadge = document.querySelector('.mode-badge');
     if (modeBadge) {
-        modeBadge.textContent = mode.toUpperCase() + ' MODE';
-        modeBadge.classList.toggle('offline', mode === 'offline');
-        modeBadge.classList.toggle('online', mode === 'online');
+        modeBadge.textContent = mode === 'dryrun' ? 'DRY RUN' : 'EXECUTE';
+        modeBadge.classList.toggle('dryrun', mode === 'dryrun');
+        modeBadge.classList.toggle('execute', mode === 'execute');
     }
 
     // Update mode info banner
@@ -247,41 +237,25 @@ function updateModeUI() {
 
         const iconDiv = document.createElement('div');
         iconDiv.className = 'info-icon';
-        iconDiv.textContent = mode === 'offline' ? '\u{1F4BE}' : '\u26A0';
+        iconDiv.textContent = mode === 'dryrun' ? '\u{1F50D}' : '\u26A1';
 
         const contentDiv = document.createElement('div');
         contentDiv.className = 'info-content';
 
         const strong = document.createElement('strong');
-        strong.textContent = mode === 'offline' ? 'Offline Mode' : 'Online Mode - CAUTION';
+        strong.textContent = mode === 'dryrun' ? 'Dry Run Mode' : 'Execute Mode - CAUTION';
         contentDiv.appendChild(strong);
 
         const p = document.createElement('p');
-        p.textContent = mode === 'offline'
-            ? 'Connect to your own triplestore (local or cloud). Download data from LINDAS and work safely without affecting production data.'
-            : 'You are connecting to a remote triplestore. Changes may affect production data. Use with care!';
+        p.textContent = mode === 'dryrun'
+            ? 'Preview what would be deleted without making any changes. Safe for testing and verification.'
+            : 'Deletions will be executed for real. A backup will be created before deletion. Use with care!';
         contentDiv.appendChild(p);
 
         modeBanner.appendChild(iconDiv);
         modeBanner.appendChild(contentDiv);
 
-        modeBanner.classList.toggle('online', mode === 'online');
-    }
-
-    // Show/hide offline-only elements
-    const downloadNavItem = document.querySelector('[data-section="download"]');
-    if (downloadNavItem) {
-        downloadNavItem.style.display = mode === 'offline' ? 'flex' : 'none';
-    }
-
-    // In Online mode, disable dropdown (always remote)
-    // In Offline mode, enable dropdown (user can choose local or remote/cloud)
-    const connectionModeSelect = document.getElementById('connection-mode');
-    if (connectionModeSelect) {
-        connectionModeSelect.disabled = mode === 'online';
-        connectionModeSelect.title = mode === 'offline'
-            ? 'Choose local instance or remote/cloud triplestore as your working copy'
-            : 'Online mode always uses remote connections';
+        modeBanner.classList.toggle('execute', mode === 'execute');
     }
 }
 
@@ -1290,82 +1264,109 @@ async function wizardPreviewDeletions() {
         state.cubesToDelete = result.toDelete || [];
         state.cubesToKeep = result.toKeep || [];
 
-        // Render preview table safely
+        // Group by base cube URI (without version number)
+        const cubeGroups = {};
+
+        state.cubesToDelete.forEach(v => {
+            const baseUri = getBaseCubeUri(v.cube);
+            if (!cubeGroups[baseUri]) {
+                cubeGroups[baseUri] = { toDelete: [], toKeep: [] };
+            }
+            cubeGroups[baseUri].toDelete.push(v);
+        });
+
+        state.cubesToKeep.forEach(v => {
+            const baseUri = getBaseCubeUri(v.cube);
+            if (!cubeGroups[baseUri]) {
+                cubeGroups[baseUri] = { toDelete: [], toKeep: [] };
+            }
+            cubeGroups[baseUri].toKeep.push(v);
+        });
+
+        // Select all cubes by default
+        state.selectedCubesForDeletion = new Set(Object.keys(cubeGroups));
+
+        // Render preview as cube cards with checkboxes
         clearElement(previewTable);
 
-        const table = document.createElement('table');
-        table.className = 'data-table';
+        Object.entries(cubeGroups).forEach(([baseUri, versions]) => {
+            const cubeRow = document.createElement('div');
+            cubeRow.className = 'cube-row';
+            cubeRow.dataset.baseUri = baseUri;
 
-        const thead = document.createElement('thead');
-        const headerRow = document.createElement('tr');
-        ['Cube URI', 'Version', 'Rank', 'Action'].forEach(text => {
-            const th = document.createElement('th');
-            th.textContent = text;
-            headerRow.appendChild(th);
-        });
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
+            // Checkbox
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'cube-checkbox';
+            checkbox.checked = true;
+            checkbox.dataset.baseUri = baseUri;
+            checkbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    state.selectedCubesForDeletion.add(baseUri);
+                } else {
+                    state.selectedCubesForDeletion.delete(baseUri);
+                }
+                updateSelectionCount();
+                updateSelectAllCheckbox();
+            });
+            cubeRow.appendChild(checkbox);
 
-        const tbody = document.createElement('tbody');
+            // Cube info
+            const cubeInfo = document.createElement('div');
+            cubeInfo.className = 'cube-info';
 
-        // Show cubes to keep first
-        state.cubesToKeep.forEach(v => {
-            const tr = document.createElement('tr');
-            tr.className = 'keep-row';
+            const cubeName = document.createElement('div');
+            cubeName.className = 'cube-name';
+            cubeName.textContent = getShortUri(baseUri);
+            cubeInfo.appendChild(cubeName);
 
-            const tdUri = document.createElement('td');
-            tdUri.className = 'mono';
-            tdUri.textContent = getShortUri(v.cube);
-            tr.appendChild(tdUri);
+            const cubeVersions = document.createElement('div');
+            cubeVersions.className = 'cube-versions';
 
-            const tdVersion = document.createElement('td');
-            tdVersion.textContent = v.version;
-            tr.appendChild(tdVersion);
+            const deleteVersions = versions.toDelete.map(v => v.version).join(', ');
+            const keepVersions = versions.toKeep.map(v => v.version).join(', ');
 
-            const tdRank = document.createElement('td');
-            tdRank.textContent = v.rank;
-            tr.appendChild(tdRank);
+            if (deleteVersions) {
+                const deleteSpan = document.createElement('span');
+                deleteSpan.className = 'to-delete';
+                deleteSpan.textContent = 'Delete: v' + deleteVersions;
+                cubeVersions.appendChild(deleteSpan);
+            }
+            if (deleteVersions && keepVersions) {
+                cubeVersions.appendChild(document.createTextNode(' | '));
+            }
+            if (keepVersions) {
+                const keepSpan = document.createElement('span');
+                keepSpan.className = 'to-keep';
+                keepSpan.textContent = 'Keep: v' + keepVersions;
+                cubeVersions.appendChild(keepSpan);
+            }
 
-            const tdAction = document.createElement('td');
-            const badge = document.createElement('span');
-            badge.className = 'badge badge-keep';
-            badge.textContent = 'KEEP';
-            tdAction.appendChild(badge);
-            tr.appendChild(tdAction);
+            cubeInfo.appendChild(cubeVersions);
+            cubeRow.appendChild(cubeInfo);
 
-            tbody.appendChild(tr);
-        });
-
-        // Then cubes to delete
-        state.cubesToDelete.forEach(v => {
-            const tr = document.createElement('tr');
-            tr.className = 'delete-row';
-
-            const tdUri = document.createElement('td');
-            tdUri.className = 'mono';
-            tdUri.textContent = getShortUri(v.cube);
-            tr.appendChild(tdUri);
-
-            const tdVersion = document.createElement('td');
-            tdVersion.textContent = v.version;
-            tr.appendChild(tdVersion);
-
-            const tdRank = document.createElement('td');
-            tdRank.textContent = v.rank;
-            tr.appendChild(tdRank);
-
-            const tdAction = document.createElement('td');
-            const badge = document.createElement('span');
-            badge.className = 'badge badge-delete';
-            badge.textContent = 'DELETE';
-            tdAction.appendChild(badge);
-            tr.appendChild(tdAction);
-
-            tbody.appendChild(tr);
+            previewTable.appendChild(cubeRow);
         });
 
-        table.appendChild(tbody);
-        previewTable.appendChild(table);
+        // Set up select all checkbox
+        const selectAllCheckbox = document.getElementById('select-all-cubes');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = true;
+            selectAllCheckbox.addEventListener('change', (e) => {
+                const checkboxes = previewTable.querySelectorAll('.cube-checkbox');
+                checkboxes.forEach(cb => {
+                    cb.checked = e.target.checked;
+                    if (e.target.checked) {
+                        state.selectedCubesForDeletion.add(cb.dataset.baseUri);
+                    } else {
+                        state.selectedCubesForDeletion.delete(cb.dataset.baseUri);
+                    }
+                });
+                updateSelectionCount();
+            });
+        }
+
+        updateSelectionCount();
 
         // Update stats safely
         if (statsGrid) {
@@ -1394,6 +1395,24 @@ async function wizardPreviewDeletions() {
             deleteLabel.textContent = 'Versions to Delete';
             deleteStat.appendChild(deleteLabel);
             statsGrid.appendChild(deleteStat);
+
+            const cubesStat = document.createElement('div');
+            cubesStat.className = 'stat';
+            const cubesValue = document.createElement('span');
+            cubesValue.className = 'stat-value';
+            cubesValue.textContent = Object.keys(cubeGroups).length;
+            cubesStat.appendChild(cubesValue);
+            const cubesLabel = document.createElement('span');
+            cubesLabel.className = 'stat-label';
+            cubesLabel.textContent = 'Base Cubes';
+            cubesStat.appendChild(cubesLabel);
+            statsGrid.appendChild(cubesStat);
+        }
+
+        // Update versions to keep display
+        const previewVersionsKeep = document.getElementById('preview-versions-keep');
+        if (previewVersionsKeep) {
+            previewVersionsKeep.textContent = state.versionsToKeep;
         }
 
         goToWizardStep(3);
@@ -1405,6 +1424,34 @@ async function wizardPreviewDeletions() {
         errorP.textContent = 'Error: ' + error.message;
         previewTable.appendChild(errorP);
         console.error('Preview error:', error);
+    }
+}
+
+function getBaseCubeUri(cubeUri) {
+    // Extract base URI by removing version number at the end
+    // e.g., "https://example.org/cube/1" -> "https://example.org/cube"
+    const match = cubeUri.match(/^(.+)\/\d+$/);
+    return match ? match[1] : cubeUri;
+}
+
+function updateSelectionCount() {
+    const countEl = document.getElementById('selected-count');
+    const previewTable = document.getElementById('deletion-preview-table');
+    if (countEl && previewTable) {
+        const totalCubes = previewTable.querySelectorAll('.cube-checkbox').length;
+        const selectedCubes = state.selectedCubesForDeletion.size;
+        countEl.textContent = selectedCubes + ' of ' + totalCubes + ' cubes selected';
+    }
+}
+
+function updateSelectAllCheckbox() {
+    const selectAllCheckbox = document.getElementById('select-all-cubes');
+    const previewTable = document.getElementById('deletion-preview-table');
+    if (selectAllCheckbox && previewTable) {
+        const totalCubes = previewTable.querySelectorAll('.cube-checkbox').length;
+        const selectedCubes = state.selectedCubesForDeletion.size;
+        selectAllCheckbox.checked = selectedCubes === totalCubes;
+        selectAllCheckbox.indeterminate = selectedCubes > 0 && selectedCubes < totalCubes;
     }
 }
 
@@ -1421,10 +1468,24 @@ async function wizardExecuteDeletion() {
     logContainer.classList.remove('hidden');
     btn.disabled = true;
 
+    const isDryRun = state.mode === 'dryrun';
+
+    // Filter cubes to delete based on selection
+    const selectedCubesToDelete = state.cubesToDelete.filter(cube => {
+        const baseUri = getBaseCubeUri(cube.cube);
+        return state.selectedCubesForDeletion.has(baseUri);
+    });
+
+    if (selectedCubesToDelete.length === 0) {
+        alert('No cubes selected for deletion. Please select at least one cube.');
+        btn.disabled = false;
+        return;
+    }
+
     // Render deletion queue safely
     if (queueList) {
         clearElement(queueList);
-        state.cubesToDelete.forEach(cube => {
+        selectedCubesToDelete.forEach(cube => {
             const div = document.createElement('div');
             div.className = 'queue-item';
             div.id = 'queue-' + cube.cube.replace(/[/:]/g, '_');
@@ -1460,128 +1521,155 @@ async function wizardExecuteDeletion() {
         if (logContent) logContent.textContent = logs.join('\n');
     };
 
-    addLog('Starting deletion process...');
+    if (isDryRun) {
+        addLog('=== DRY RUN MODE ===');
+        addLog('No actual changes will be made.');
+        addLog('');
+    }
 
-    const total = state.cubesToDelete.length;
+    addLog('Starting ' + (isDryRun ? 'dry run' : 'deletion') + ' process...');
+    addLog('Selected cubes: ' + selectedCubesToDelete.length);
+
+    const total = selectedCubesToDelete.length;
     let deleted = 0;
     let errors = 0;
     let totalTriples = 0;
 
     const config = getConnectionConfig();
 
-    // STEP 0: Create ONE consolidated backup of ALL cubes before deletion
-    addLog('Creating consolidated backup of all ' + total + ' cube versions...');
-    updateDeletionProgress('Creating backup...', 0, total);
+    // STEP 0: Create ONE consolidated backup of ALL selected cubes before deletion
+    if (!isDryRun) {
+        addLog('');
+        addLog('Creating consolidated backup of all ' + total + ' cube versions...');
+        updateDeletionProgress('Creating backup...', 0, total);
 
-    let consolidatedBackupId = null;
-    try {
-        const cubeUris = state.cubesToDelete.map(c => c.cube);
-        const backupResponse = await fetch('/api/backup/create-multi', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ...config,
-                cubeUris: cubeUris,
-                graphUri: state.wizardGraph
-            })
-        });
+        let consolidatedBackupId = null;
+        try {
+            const cubeUris = selectedCubesToDelete.map(c => c.cube);
+            const backupResponse = await fetch('/api/backup/create-multi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...config,
+                    cubeUris: cubeUris,
+                    graphUri: state.wizardGraph
+                })
+            });
 
-        const backupResult = await backupResponse.json();
-        if (backupResult.success && backupResult.backupId) {
-            consolidatedBackupId = backupResult.backupId;
-            state.deletionResults.backupIds.push(backupResult.backupId);
-            addLog('Consolidated backup created: ' + backupResult.backupId);
-            addLog('  - Cubes backed up: ' + backupResult.cubeCount);
-            addLog('  - Total triples: ' + backupResult.totalTripleCount);
-            addLog('  - File size: ' + formatBytes(backupResult.zipFileSize));
+            const backupResult = await backupResponse.json();
+            if (backupResult.success && backupResult.backupId) {
+                consolidatedBackupId = backupResult.backupId;
+                state.deletionResults.backupIds.push(backupResult.backupId);
+                addLog('Consolidated backup created: ' + backupResult.backupId);
+                addLog('  - Cubes backed up: ' + backupResult.cubeCount);
+                addLog('  - Total triples: ' + backupResult.totalTripleCount);
+                addLog('  - File size: ' + formatBytes(backupResult.zipFileSize));
 
-            // Store backup info for auto-download later
-            state.deletionResults.consolidatedBackupId = consolidatedBackupId;
-            state.deletionResults.consolidatedBackupFilename = backupResult.zipFilename;
-        } else {
-            addLog('WARNING: Backup failed - ' + (backupResult.error || 'Unknown error'));
-            addLog('Continuing with deletion (data may not be recoverable)...');
+                // Store backup info for auto-download later
+                state.deletionResults.consolidatedBackupId = consolidatedBackupId;
+                state.deletionResults.consolidatedBackupFilename = backupResult.zipFilename;
+            } else {
+                addLog('ERROR: Backup failed - ' + (backupResult.error || 'Unknown error'));
+                addLog('ABORTING deletion to prevent data loss.');
+                btn.disabled = false;
+                return;
+            }
+        } catch (backupError) {
+            addLog('ERROR: Backup error - ' + backupError.message);
+            addLog('ABORTING deletion to prevent data loss.');
+            btn.disabled = false;
+            return;
         }
-    } catch (backupError) {
-        addLog('WARNING: Backup error - ' + backupError.message);
-        addLog('Continuing with deletion (data may not be recoverable)...');
+    } else {
+        addLog('');
+        addLog('[DRY RUN] Would create backup of ' + total + ' cube versions');
     }
 
     addLog('');
-    addLog('Starting cube deletions...');
+    addLog('Starting cube ' + (isDryRun ? 'analysis' : 'deletions') + '...');
 
     // Now delete each cube (backup already done)
-    for (let i = 0; i < state.cubesToDelete.length; i++) {
-        const cube = state.cubesToDelete[i];
+    for (let i = 0; i < selectedCubesToDelete.length; i++) {
+        const cube = selectedCubesToDelete[i];
         const queueItem = document.getElementById('queue-' + cube.cube.replace(/[/:]/g, '_'));
 
         // Update queue item
         if (queueItem) {
             queueItem.classList.add('processing');
             const statusEl = queueItem.querySelector('.queue-item-status');
-            if (statusEl) statusEl.textContent = 'Deleting...';
+            if (statusEl) statusEl.textContent = isDryRun ? 'Analyzing...' : 'Deleting...';
         }
 
-        updateDeletionProgress('Deleting cubes...', i + 1, total);
+        updateDeletionProgress(isDryRun ? 'Analyzing cubes...' : 'Deleting cubes...', i + 1, total);
         addLog('Processing: ' + cube.cube);
 
         try {
-            // No individual backup needed - consolidated backup already done
+            if (isDryRun) {
+                // In dry run mode, just simulate the deletion
+                addLog('  [DRY RUN] Would delete observations');
+                addLog('  [DRY RUN] Would delete observation links');
+                addLog('  [DRY RUN] Would delete metadata');
+                deleted++;
+                state.deletionResults.deletedCubes.push(cube);
+                addLog('  [DRY RUN] Would be deleted');
+            } else {
+                // Actually delete in execute mode
 
-            // Step 2: Delete observations
-            addLog('  Deleting observations...');
-            const obsResponse = await fetch('/api/cubes/delete-observations', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...config,
-                    cubeUri: cube.cube,
-                    graphUri: state.wizardGraph
-                })
-            });
+                // Step 2: Delete observations
+                addLog('  Deleting observations...');
+                const obsResponse = await fetch('/api/cubes/delete-observations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...config,
+                        cubeUri: cube.cube,
+                        graphUri: state.wizardGraph
+                    })
+                });
 
-            const obsResult = await obsResponse.json();
-            totalTriples += obsResult.triplesDeleted || 0;
+                const obsResult = await obsResponse.json();
+                totalTriples += obsResult.triplesDeleted || 0;
 
-            // Step 3: Delete observation links
-            addLog('  Deleting observation links...');
-            const linksResponse = await fetch('/api/cubes/delete-observation-links', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...config,
-                    cubeUri: cube.cube,
-                    graphUri: state.wizardGraph
-                })
-            });
+                // Step 3: Delete observation links
+                addLog('  Deleting observation links...');
+                const linksResponse = await fetch('/api/cubes/delete-observation-links', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...config,
+                        cubeUri: cube.cube,
+                        graphUri: state.wizardGraph
+                    })
+                });
 
-            const linksResult = await linksResponse.json();
-            totalTriples += linksResult.triplesDeleted || 0;
+                const linksResult = await linksResponse.json();
+                totalTriples += linksResult.triplesDeleted || 0;
 
-            // Step 4: Delete metadata
-            addLog('  Deleting metadata...');
-            const metaResponse = await fetch('/api/cubes/delete-metadata', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...config,
-                    cubeUri: cube.cube,
-                    graphUri: state.wizardGraph
-                })
-            });
+                // Step 4: Delete metadata
+                addLog('  Deleting metadata...');
+                const metaResponse = await fetch('/api/cubes/delete-metadata', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...config,
+                        cubeUri: cube.cube,
+                        graphUri: state.wizardGraph
+                    })
+                });
 
-            const metaResult = await metaResponse.json();
-            totalTriples += metaResult.triplesDeleted || 0;
+                const metaResult = await metaResponse.json();
+                totalTriples += metaResult.triplesDeleted || 0;
 
-            deleted++;
-            state.deletionResults.deletedCubes.push(cube);
-            addLog('  Deleted successfully');
+                deleted++;
+                state.deletionResults.deletedCubes.push(cube);
+                addLog('  Deleted successfully');
+            }
 
             if (queueItem) {
                 queueItem.classList.remove('processing');
                 queueItem.classList.add('completed');
                 const statusEl = queueItem.querySelector('.queue-item-status');
-                if (statusEl) statusEl.textContent = 'Deleted';
+                if (statusEl) statusEl.textContent = isDryRun ? 'Would Delete' : 'Deleted';
             }
 
         } catch (error) {
@@ -1603,35 +1691,43 @@ async function wizardExecuteDeletion() {
     state.deletionResults.totalTriplesDeleted = totalTriples;
 
     addLog('');
-    addLog('=== DELETION COMPLETE ===');
-    addLog('Deleted: ' + deleted + ' cubes');
-    addLog('Errors: ' + errors);
-    addLog('Total triples removed: ' + totalTriples);
-
-    // Auto-download the consolidated backup ZIP
-    if (consolidatedBackupId) {
+    if (isDryRun) {
+        addLog('=== DRY RUN COMPLETE ===');
+        addLog('Would delete: ' + deleted + ' cubes');
+        addLog('Errors: ' + errors);
         addLog('');
-        addLog('Downloading backup file...');
-        try {
-            // Trigger download via browser
-            const downloadUrl = '/api/backup/download/' + encodeURIComponent(consolidatedBackupId);
-            const link = document.createElement('a');
-            link.href = downloadUrl;
-            link.download = state.deletionResults.consolidatedBackupFilename || ('backup_' + consolidatedBackupId + '.zip');
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            addLog('Backup downloaded: ' + (state.deletionResults.consolidatedBackupFilename || consolidatedBackupId));
-        } catch (downloadError) {
-            addLog('WARNING: Auto-download failed - ' + downloadError.message);
-            addLog('You can manually download from the Backups section.');
+        addLog('Switch to Execute mode and run again to perform actual deletions.');
+    } else {
+        addLog('=== DELETION COMPLETE ===');
+        addLog('Deleted: ' + deleted + ' cubes');
+        addLog('Errors: ' + errors);
+        addLog('Total triples removed: ' + totalTriples);
+
+        // Auto-download the consolidated backup ZIP
+        if (state.deletionResults.consolidatedBackupId) {
+            addLog('');
+            addLog('Downloading backup file...');
+            try {
+                // Trigger download via browser
+                const downloadUrl = '/api/backup/download/' + encodeURIComponent(state.deletionResults.consolidatedBackupId);
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = state.deletionResults.consolidatedBackupFilename || ('backup_' + state.deletionResults.consolidatedBackupId + '.zip');
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                addLog('Backup downloaded: ' + (state.deletionResults.consolidatedBackupFilename || state.deletionResults.consolidatedBackupId));
+            } catch (downloadError) {
+                addLog('WARNING: Auto-download failed - ' + downloadError.message);
+                addLog('You can manually download from the Backups section.');
+            }
         }
     }
 
     // Move to summary step
     setTimeout(() => {
         goToWizardStep(5);
-        renderWizardSummary();
+        renderWizardSummary(isDryRun);
     }, 1000);
 }
 
@@ -1645,20 +1741,25 @@ function updateDeletionProgress(step, current, total) {
     if (progressFill) progressFill.style.width = (current / total * 100) + '%';
 }
 
-function renderWizardSummary() {
+function renderWizardSummary(isDryRun = false) {
     const timestampEl = document.getElementById('summary-timestamp');
     const statsGrid = document.getElementById('wizard-summary-stats');
     const deletedList = document.getElementById('summary-deleted-list');
     const keptList = document.getElementById('summary-kept-list');
 
     if (timestampEl) {
-        timestampEl.textContent = 'Completed at ' + new Date().toLocaleString();
+        timestampEl.textContent = (isDryRun ? 'Dry Run ' : '') + 'Completed at ' + new Date().toLocaleString();
     }
 
     if (statsGrid) {
         clearElement(statsGrid);
 
-        const stats = [
+        const stats = isDryRun ? [
+            { value: state.deletionResults.deletedCubes.length, label: 'Would Delete', className: 'text-warning' },
+            { value: state.deletionResults.keptCubes.length, label: 'Would Keep', className: 'text-success' },
+            { value: '-', label: 'Triples (N/A)', className: '' },
+            { value: '0', label: 'Backups (Dry Run)', className: '' }
+        ] : [
             { value: state.deletionResults.deletedCubes.length, label: 'Versions Deleted', className: 'text-danger' },
             { value: state.deletionResults.keptCubes.length, label: 'Versions Preserved', className: 'text-success' },
             { value: state.deletionResults.totalTriplesDeleted.toLocaleString(), label: 'Triples Removed', className: '' },

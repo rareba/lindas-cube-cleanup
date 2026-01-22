@@ -20,13 +20,13 @@
                 <div class="nav-section">
                     <div class="nav-section-title">Mode</div>
                     <div class="mode-toggle" id="mode-toggle">
-                        <button class="mode-btn active" data-mode="offline" title="Work with local triplestore">
-                            <span class="mode-icon">&#128190;</span>
-                            <span class="mode-label">Offline</span>
+                        <button class="mode-btn active" data-mode="dryrun" title="Preview changes without executing">
+                            <span class="mode-icon">&#128269;</span>
+                            <span class="mode-label">Dry Run</span>
                         </button>
-                        <button class="mode-btn" data-mode="online" title="Connect to remote triplestore">
-                            <span class="mode-icon">&#127760;</span>
-                            <span class="mode-label">Online</span>
+                        <button class="mode-btn" data-mode="execute" title="Execute real deletions">
+                            <span class="mode-icon">&#9889;</span>
+                            <span class="mode-label">Execute</span>
                         </button>
                     </div>
                 </div>
@@ -40,7 +40,6 @@
                     <a href="#" class="nav-item" data-section="download">
                         <span class="nav-icon">&#8615;</span>
                         <span class="nav-text">Download Data</span>
-                        <span class="nav-badge offline-only">Offline</span>
                     </a>
                 </div>
 
@@ -91,7 +90,7 @@
                 </div>
                 <div class="header-right">
                     <div class="mode-indicator" id="header-mode-indicator">
-                        <span class="mode-badge offline">OFFLINE MODE</span>
+                        <span class="mode-badge dryrun">DRY RUN</span>
                     </div>
                     <div class="triplestore-info" id="header-triplestore-info">
                         <span class="triplestore-type">Not connected</span>
@@ -432,13 +431,20 @@
                         <!-- Step 3: Preview Deletions -->
                         <div class="wizard-panel" id="wizard-step-3">
                             <div class="card">
-                                <h3>Step 3: Preview Deletions</h3>
-                                <p class="description">Review which versions will be deleted (keeping newest 2 per cube).</p>
+                                <h3>Step 3: Select Cubes to Delete</h3>
+                                <p class="description">Select which cube versions to delete (keeping newest <span id="preview-versions-keep">2</span> per cube). All are selected by default.</p>
 
                                 <div id="wizard-deletion-preview" class="deletion-preview">
                                     <div class="preview-legend">
-                                        <span class="legend-item keep"><span class="badge badge-keep">KEEP</span> Newest 2 versions</span>
+                                        <span class="legend-item keep"><span class="badge badge-keep">KEEP</span> Newest versions</span>
                                         <span class="legend-item delete"><span class="badge badge-delete">DELETE</span> Older versions</span>
+                                    </div>
+                                    <div class="selection-controls">
+                                        <label class="checkbox-label select-all-label">
+                                            <input type="checkbox" id="select-all-cubes" checked>
+                                            <span>Select All Cubes</span>
+                                        </label>
+                                        <span id="selected-count" class="selected-count">0 of 0 cubes selected</span>
                                     </div>
                                     <div id="deletion-preview-table"></div>
                                 </div>
@@ -723,11 +729,11 @@
 
                                 <h4>Key Features</h4>
                                 <ul class="doc-list">
-                                    <li><strong>Offline Mode:</strong> Download data from LINDAS to a local triplestore and work safely without affecting production.</li>
-                                    <li><strong>Online Mode:</strong> Connect directly to remote triplestores (use with caution on production).</li>
-                                    <li><strong>Deletion Wizard:</strong> Step-by-step workflow to identify and delete old versions.</li>
+                                    <li><strong>Dry Run Mode:</strong> Preview what would be deleted without making any changes. Safe for testing.</li>
+                                    <li><strong>Execute Mode:</strong> Actually perform the deletions after confirming the preview.</li>
+                                    <li><strong>Deletion Wizard:</strong> Step-by-step workflow to identify and delete old versions with selective cube deletion.</li>
                                     <li><strong>Query Editor:</strong> Execute custom SPARQL queries with templates.</li>
-                                    <li><strong>Automatic Backups:</strong> All deletions create backups that are kept for 7 days.</li>
+                                    <li><strong>Automatic Backups:</strong> All deletions create a consolidated backup ZIP before deletion starts.</li>
                                 </ul>
 
                                 <h4>Workflow Overview</h4>
@@ -739,7 +745,7 @@
                                     <span class="workflow-arrow">&#8594;</span>
                                     <div class="workflow-step">
                                         <span class="step-num">2</span>
-                                        <span class="step-text">Download Data (Offline)</span>
+                                        <span class="step-text">Download Data (Optional)</span>
                                     </div>
                                     <span class="workflow-arrow">&#8594;</span>
                                     <div class="workflow-step">
