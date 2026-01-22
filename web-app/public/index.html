@@ -350,7 +350,7 @@
                 <!-- Deletion Wizard Section -->
                 <section id="section-wizard" class="content-section">
                     <div class="section-intro">
-                        <p>Step-by-step wizard to identify and delete old cube versions while keeping the newest 2.</p>
+                        <p>Step-by-step wizard to identify and delete old cube versions while keeping the newest <span id="versions-to-keep-display">2</span>.</p>
                     </div>
 
                     <!-- Wizard Steps Indicator -->
@@ -388,6 +388,12 @@
                                 <div class="form-group">
                                     <label for="wizard-graph">Graph URI</label>
                                     <input type="text" id="wizard-graph" value="https://lindas.admin.ch/sfoe/cube" placeholder="https://lindas.admin.ch/sfoe/cube">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="versions-to-keep">Versions to Keep</label>
+                                    <input type="number" id="versions-to-keep" value="2" min="1" max="10" style="width: 80px;">
+                                    <span class="hint">Number of newest versions to preserve per cube (default: 2)</span>
                                 </div>
 
                                 <div class="button-group">

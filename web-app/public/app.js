@@ -52,6 +52,7 @@ const state = {
     multiVersionCubes: [],
     cubesToDelete: [],
     cubesToKeep: [],
+    versionsToKeep: 2, // Number of newest versions to keep (configurable)
 
     // Deletion results
     deletionResults: {
@@ -915,6 +916,21 @@ function initWizard() {
         loadGraphBtn.addEventListener('click', wizardLoadGraph);
     }
 
+    // Versions to keep setting
+    const versionsToKeepInput = document.getElementById('versions-to-keep');
+    if (versionsToKeepInput) {
+        versionsToKeepInput.value = state.versionsToKeep;
+        versionsToKeepInput.addEventListener('change', () => {
+            const value = parseInt(versionsToKeepInput.value, 10);
+            if (value >= 1 && value <= 10) {
+                state.versionsToKeep = value;
+                // Update the display text
+                const displayEl = document.getElementById('versions-to-keep-display');
+                if (displayEl) displayEl.textContent = value;
+            }
+        });
+    }
+
     // Step 2: Continue to preview
     const nextBtn2 = document.getElementById('btn-wizard-next-2');
     if (nextBtn2) {
@@ -1106,13 +1122,13 @@ function renderWizardStep2() {
     });
 
     const totalCubes = Object.keys(baseCubes).length;
-    const multiVersion = Object.entries(baseCubes).filter(([_, versions]) => versions.length > 2);
+    const multiVersion = Object.entries(baseCubes).filter(([_, versions]) => versions.length > state.versionsToKeep);
     state.multiVersionCubes = multiVersion.map(([base, versions]) => ({
         baseCube: base,
         versions: versions.sort((a, b) => b.version - a.version)
     }));
 
-    const toDelete = multiVersion.reduce((count, [_, versions]) => count + versions.length - 2, 0);
+    const toDelete = multiVersion.reduce((count, [_, versions]) => count + versions.length - state.versionsToKeep, 0);
 
     // Render summary stats safely
     const summaryEl = document.getElementById('wizard-cubes-summary');
@@ -1185,7 +1201,7 @@ function renderWizardStep2() {
 
                 const tdDelete = document.createElement('td');
                 tdDelete.className = 'text-danger';
-                tdDelete.textContent = cube.versions.length - 2;
+                tdDelete.textContent = cube.versions.length - state.versionsToKeep;
                 tr.appendChild(tdDelete);
 
                 tbody.appendChild(tr);
@@ -1453,6 +1469,48 @@ async function wizardExecuteDeletion() {
 
     const config = getConnectionConfig();
 
+    // STEP 0: Create ONE consolidated backup of ALL cubes before deletion
+    addLog('Creating consolidated backup of all ' + total + ' cube versions...');
+    updateDeletionProgress('Creating backup...', 0, total);
+
+    let consolidatedBackupId = null;
+    try {
+        const cubeUris = state.cubesToDelete.map(c => c.cube);
+        const backupResponse = await fetch('/api/backup/create-multi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...config,
+                cubeUris: cubeUris,
+                graphUri: state.wizardGraph
+            })
+        });
+
+        const backupResult = await backupResponse.json();
+        if (backupResult.success && backupResult.backupId) {
+            consolidatedBackupId = backupResult.backupId;
+            state.deletionResults.backupIds.push(backupResult.backupId);
+            addLog('Consolidated backup created: ' + backupResult.backupId);
+            addLog('  - Cubes backed up: ' + backupResult.cubeCount);
+            addLog('  - Total triples: ' + backupResult.totalTripleCount);
+            addLog('  - File size: ' + formatBytes(backupResult.zipFileSize));
+
+            // Store backup info for auto-download later
+            state.deletionResults.consolidatedBackupId = consolidatedBackupId;
+            state.deletionResults.consolidatedBackupFilename = backupResult.zipFilename;
+        } else {
+            addLog('WARNING: Backup failed - ' + (backupResult.error || 'Unknown error'));
+            addLog('Continuing with deletion (data may not be recoverable)...');
+        }
+    } catch (backupError) {
+        addLog('WARNING: Backup error - ' + backupError.message);
+        addLog('Continuing with deletion (data may not be recoverable)...');
+    }
+
+    addLog('');
+    addLog('Starting cube deletions...');
+
+    // Now delete each cube (backup already done)
     for (let i = 0; i < state.cubesToDelete.length; i++) {
         const cube = state.cubesToDelete[i];
         const queueItem = document.getElementById('queue-' + cube.cube.replace(/[/:]/g, '_'));
@@ -1461,30 +1519,14 @@ async function wizardExecuteDeletion() {
         if (queueItem) {
             queueItem.classList.add('processing');
             const statusEl = queueItem.querySelector('.queue-item-status');
-            if (statusEl) statusEl.textContent = 'Processing...';
+            if (statusEl) statusEl.textContent = 'Deleting...';
         }
 
         updateDeletionProgress('Deleting cubes...', i + 1, total);
         addLog('Processing: ' + cube.cube);
 
         try {
-            // Step 1: Create backup
-            addLog('  Creating backup...');
-            const backupResponse = await fetch('/api/backup/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...config,
-                    cubeUri: cube.cube,
-                    graphUri: state.wizardGraph
-                })
-            });
-
-            const backupResult = await backupResponse.json();
-            if (backupResult.backupId) {
-                state.deletionResults.backupIds.push(backupResult.backupId);
-                addLog('  Backup created: ' + backupResult.backupId);
-            }
+            // No individual backup needed - consolidated backup already done
 
             // Step 2: Delete observations
             addLog('  Deleting observations...');
@@ -1565,6 +1607,26 @@ async function wizardExecuteDeletion() {
     addLog('Deleted: ' + deleted + ' cubes');
     addLog('Errors: ' + errors);
     addLog('Total triples removed: ' + totalTriples);
+
+    // Auto-download the consolidated backup ZIP
+    if (consolidatedBackupId) {
+        addLog('');
+        addLog('Downloading backup file...');
+        try {
+            // Trigger download via browser
+            const downloadUrl = '/api/backup/download/' + encodeURIComponent(consolidatedBackupId);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = state.deletionResults.consolidatedBackupFilename || ('backup_' + consolidatedBackupId + '.zip');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            addLog('Backup downloaded: ' + (state.deletionResults.consolidatedBackupFilename || consolidatedBackupId));
+        } catch (downloadError) {
+            addLog('WARNING: Auto-download failed - ' + downloadError.message);
+            addLog('You can manually download from the Backups section.');
+        }
+    }
 
     // Move to summary step
     setTimeout(() => {

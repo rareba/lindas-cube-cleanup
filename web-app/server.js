@@ -2123,6 +2123,179 @@ app.post('/api/backup/create', async (req, res) => {
     }
 });
 
+// Create a consolidated backup for MULTIPLE cubes (all in ONE ZIP file)
+// Used before batch deletion to create a single restorable backup
+app.post('/api/backup/create-multi', async (req, res) => {
+    try {
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUris, username, password, type } = req.body;
+        const base = endpoint || baseUrl;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+        const auth = { username, password };
+
+        if (!cubeUris || !Array.isArray(cubeUris) || cubeUris.length === 0) {
+            return res.status(400).json({ error: 'cubeUris must be a non-empty array' });
+        }
+
+        // Construct triplestore-specific query endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
+
+        const headers = {
+            'Accept': 'application/n-triples',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            ...buildAuthHeaders(auth.username, auth.password)
+        };
+
+        // Fetch triples for all cubes
+        const cubesData = [];
+        let totalTripleCount = 0;
+
+        for (const cubeUri of cubeUris) {
+            const query = `
+                PREFIX cube: <https://cube.link/>
+                PREFIX sh: <http://www.w3.org/ns/shacl#>
+                PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+                CONSTRUCT {
+                    ?s ?p ?o .
+                }
+                WHERE {
+                    GRAPH <${graphUri}> {
+                        {
+                            <${cubeUri}> ?p ?o .
+                            BIND(<${cubeUri}> AS ?s)
+                        }
+                        UNION
+                        {
+                            <${cubeUri}> ?p1 ?bn .
+                            FILTER(isBlank(?bn))
+                            ?bn ?p ?o .
+                            BIND(?bn AS ?s)
+                        }
+                        UNION
+                        {
+                            <${cubeUri}> cube:observationConstraint ?shape .
+                            ?shape ?p ?o .
+                            BIND(?shape AS ?s)
+                        }
+                        UNION
+                        {
+                            <${cubeUri}> cube:observationConstraint ?shape .
+                            ?shape sh:property ?propShape .
+                            ?propShape ?p ?o .
+                            BIND(?propShape AS ?s)
+                        }
+                        UNION
+                        {
+                            <${cubeUri}> cube:observationConstraint ?shape .
+                            ?shape sh:property ?propShape .
+                            ?propShape sh:in ?list .
+                            ?list rdf:rest*/rdf:first ?item .
+                            ?list ?p ?o .
+                            BIND(?list AS ?s)
+                        }
+                        UNION
+                        {
+                            <${cubeUri}> cube:observationSet ?obsSet .
+                            ?obsSet ?p ?o .
+                            BIND(?obsSet AS ?s)
+                        }
+                        UNION
+                        {
+                            <${cubeUri}> cube:observationSet ?obsSet .
+                            ?obsSet cube:observation ?obs .
+                            ?obs ?p ?o .
+                            BIND(?obs AS ?s)
+                        }
+                    }
+                }
+            `;
+
+            const response = await fetch(sparqlEndpoint, {
+                method: 'POST',
+                headers: headers,
+                body: `query=${encodeURIComponent(query)}`
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                console.error(`Backup query failed for ${cubeUri}: ${response.status} - ${text}`);
+                continue; // Skip this cube but continue with others
+            }
+
+            const triples = await response.text();
+            const tripleCount = triples.split('\n').filter(line => line.trim()).length;
+            totalTripleCount += tripleCount;
+
+            cubesData.push({
+                cubeUri: cubeUri,
+                triples: triples,
+                tripleCount: tripleCount
+            });
+        }
+
+        if (cubesData.length === 0) {
+            return res.status(500).json({ error: 'Failed to backup any cubes' });
+        }
+
+        // Generate backup metadata
+        const metadata = {
+            graphUri: graphUri,
+            endpoint: base,
+            dataset: db,
+            type: triplestoreType,
+            tripleCount: totalTripleCount,
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+            deletionContext: {
+                reason: 'Pre-deletion backup of multiple cube versions',
+                cubeCount: cubesData.length,
+                deletedAt: new Date().toISOString()
+            }
+        };
+
+        // Create consolidated ZIP backup with all cubes
+        const zipInfo = await createZipBackup(cubesData, metadata);
+
+        res.json({
+            success: true,
+            backupId: zipInfo.backupId,
+            cubeCount: cubesData.length,
+            totalTripleCount: totalTripleCount,
+            expiresAt: metadata.expiresAt,
+            zipFilename: zipInfo.zipFilename,
+            zipFileSize: zipInfo.compressedSize,
+            cubesBackedUp: cubesData.map(c => ({ uri: c.cubeUri, tripleCount: c.tripleCount }))
+        });
+    } catch (error) {
+        console.error('Multi-cube backup error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Download a backup ZIP file directly
+app.get('/api/backup/download/:backupId', (req, res) => {
+    try {
+        const { backupId } = req.params;
+        const files = fs.readdirSync(BACKUP_DIR);
+        const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
+
+        if (!zipFile) {
+            return res.status(404).json({ error: 'Backup not found' });
+        }
+
+        const zipPath = path.join(BACKUP_DIR, zipFile);
+        res.download(zipPath, zipFile);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // List all backups (reads from self-contained ZIP files)
 app.get('/api/backup/list', (req, res) => {
     try {
@@ -2389,7 +2562,7 @@ app.post('/api/backup/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// Import uploaded file to triplestore
+// Import uploaded file to triplestore (supports both temp file and direct ZIP upload)
 app.post('/api/backup/import', async (req, res) => {
     try {
         const {
@@ -2422,15 +2595,36 @@ app.post('/api/backup/import', async (req, res) => {
             return res.status(400).json({ error: 'No uploaded file found. Please upload a file first.' });
         }
 
+        // Get triples - handle different parsed formats (ZIP vs JSON)
+        let triples = '';
+        if (parsed.triples) {
+            triples = parsed.triples;
+        } else if (parsed.dataFiles) {
+            // Multi-cube ZIP format: combine all data files
+            const dataFileNames = Object.keys(parsed.dataFiles).sort();
+            for (const fileName of dataFileNames) {
+                if (triples) triples += '\n';
+                triples += parsed.dataFiles[fileName];
+            }
+        }
+
+        if (!triples || triples.trim().length === 0) {
+            return res.status(400).json({ error: 'No triples found in the uploaded file' });
+        }
+
         // Determine target graph
-        const targetGraph = overrideGraph || graphUri || (parsed.metadata?.graphUri);
+        const targetGraph = overrideGraph || graphUri ||
+            (parsed.metadata?.graphUri) ||
+            (parsed.manifest?.graph?.uri) ||
+            (parsed.restore?.targetGraph);
+
         if (!targetGraph) {
             return res.status(400).json({ error: 'No target graph specified' });
         }
 
         // Import to triplestore
         const config = { type: type || 'fuseki', mode: mode || 'local', baseUrl, dataset, database, repository, username, password };
-        await importData(config, targetGraph, parsed.triples);
+        await importData(config, targetGraph, triples);
 
         // Clean up temp file
         if (tempPath && fs.existsSync(tempPath)) {
@@ -2452,13 +2646,16 @@ app.post('/api/backup/import', async (req, res) => {
             }
         }
 
+        const tripleCount = triples.split('\n').filter(line => line.trim()).length;
         res.json({
             success: true,
-            importedTriples: parsed.triples.split('\n').filter(line => line.trim()).length,
+            importedTriples: tripleCount,
             graphUri: targetGraph,
-            metadata: parsed.metadata
+            metadata: parsed.metadata,
+            cubeCount: parsed.cubeCount || (parsed.cubes?.length) || 1
         });
     } catch (error) {
+        console.error('Import error:', error);
         res.status(500).json({ error: error.message });
     }
 });
