@@ -15,14 +15,44 @@ This web application provides a graphical interface for the LINDAS cube version 
 - **Apache Fuseki** (v4.x or v5.x) running locally on port 3030
 - Internet connection for accessing LINDAS endpoint
 
-## Installation
+## Installation & Starting (Easy Method)
+
+Use the provided cross-platform startup scripts that handle installation automatically:
+
+**Windows (Command Prompt):**
+```cmd
+cd web-app
+start.bat
+```
+
+**Windows (PowerShell):**
+```powershell
+cd web-app
+.\start.ps1
+```
+
+**macOS / Linux:**
+```bash
+cd web-app
+chmod +x start.sh   # First time only
+./start.sh
+```
+
+The scripts will:
+- Check that Node.js is installed
+- Automatically run `npm install` if needed (first start)
+- Start the web server
+
+Open your browser at http://localhost:3001
+
+## Manual Installation (Alternative)
 
 ```powershell
 cd web-app
 npm install
 ```
 
-## Starting the Application
+## Manual Start (Alternative)
 
 1. **Start Apache Fuseki** (if not already running):
    ```powershell
@@ -212,6 +242,9 @@ For customer demonstration:
 
 ```
 web-app/
+  start.bat          - Windows startup script (Command Prompt)
+  start.ps1          - Windows startup script (PowerShell)
+  start.sh           - macOS/Linux startup script
   package.json       - Node.js dependencies
   server.js          - Express backend with API endpoints
   public/
