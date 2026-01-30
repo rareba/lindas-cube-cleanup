@@ -11,13 +11,50 @@ PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 `;
 
 /**
+ * Validate and sanitize a URI to prevent SPARQL injection.
+ * Only allows valid URI characters and rejects anything containing
+ * SPARQL-breaking sequences like >, }, or query keywords.
+ * @param {string} uri - The URI to validate
+ * @returns {string} - The validated URI
+ * @throws {Error} - If the URI is invalid or contains injection attempts
+ */
+function validateUri(uri) {
+    if (!uri || typeof uri !== 'string') {
+        throw new Error('URI must be a non-empty string');
+    }
+
+    // Trim whitespace
+    uri = uri.trim();
+
+    // Must start with a valid scheme
+    if (!/^https?:\/\//.test(uri)) {
+        throw new Error(`Invalid URI scheme: ${uri.substring(0, 50)}`);
+    }
+
+    // Reject characters that could break out of SPARQL URI delimiters
+    const dangerousChars = /[<>"{}|\\^`\n\r\t]/;
+    if (dangerousChars.test(uri)) {
+        throw new Error(`URI contains invalid characters: ${uri.substring(0, 50)}`);
+    }
+
+    // Reject SPARQL injection patterns (query keywords after URI)
+    const injectionPatterns = /(\bDELETE\b|\bINSERT\b|\bDROP\b|\bCLEAR\b|\bCREATE\b|\bLOAD\b|\bCOPY\b|\bMOVE\b|\bADD\b)/i;
+    if (injectionPatterns.test(uri)) {
+        throw new Error(`URI contains suspicious SPARQL keywords: ${uri.substring(0, 50)}`);
+    }
+
+    return uri;
+}
+
+/**
  * List all cube versions in a graph
  */
 function listCubeVersionsQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `${PREFIXES}
 SELECT DISTINCT ?baseCube ?cube ?version ?dateCreated ?title
 WHERE {
-  GRAPH <${graphUri}> {
+  GRAPH <${safeGraph}> {
     ?cube a cube:Cube .
     OPTIONAL { ?cube schema:dateCreated ?dateCreated }
     OPTIONAL { ?cube schema:name ?title . FILTER(lang(?title) = "en" || lang(?title) = "") }
@@ -34,11 +71,16 @@ ORDER BY ?baseCube DESC(?version)`;
  * Identify versions to delete (keep newest N)
  */
 function identifyDeletionsQuery(graphUri, versionsToKeep = 2) {
+    const safeGraph = validateUri(graphUri);
+    const safeKeep = parseInt(versionsToKeep, 10);
+    if (isNaN(safeKeep) || safeKeep < 1) {
+        throw new Error('versionsToKeep must be a positive integer');
+    }
     return `${PREFIXES}
 SELECT ?baseCube ?cube ?version ?rank
-       (IF(?rank <= ${versionsToKeep}, "KEEP", "DELETE") AS ?action)
+       (IF(?rank <= ${safeKeep}, "KEEP", "DELETE") AS ?action)
 WHERE {
-  GRAPH <${graphUri}> {
+  GRAPH <${safeGraph}> {
     ?cube a cube:Cube .
     BIND(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1") AS ?versionStr)
     BIND(IF(REGEX(STR(?cube), "^.*/[0-9]+/?$"), xsd:integer(?versionStr), 0) AS ?version)
@@ -72,6 +114,8 @@ ORDER BY ?baseCube ?rank`;
  * Preview single cube (count components)
  */
 function previewCubeQuery(graphUri, cubeUri) {
+    const safeGraph = validateUri(graphUri);
+    const safeCube = validateUri(cubeUri);
     return `${PREFIXES}
 SELECT
     ?cube
@@ -82,8 +126,8 @@ SELECT
     (COUNT(DISTINCT ?obsSet) AS ?observationSetCount)
     (COUNT(DISTINCT ?obs) AS ?observationCount)
 WHERE {
-    GRAPH <${graphUri}> {
-        BIND(<${cubeUri}> AS ?cube)
+    GRAPH <${safeGraph}> {
+        BIND(<${safeCube}> AS ?cube)
         ?cube rdf:type cube:Cube .
         OPTIONAL { ?cube schema:name ?title . FILTER(lang(?title) = "en" || lang(?title) = "") }
         OPTIONAL { ?cube schema:dateCreated ?dateCreated }
@@ -98,31 +142,71 @@ GROUP BY ?cube ?title ?dateCreated`;
 
 /**
  * Export cube as CONSTRUCT (for backup)
+ * Captures ALL cube data including:
+ * - Cube direct properties (schema:name, schema:dateCreated, etc.)
+ * - Blank node properties attached to the cube
+ * - SHACL NodeShapes (observationConstraint)
+ * - SHACL PropertyShapes (sh:property)
+ * - RDF Lists (sh:in lists with rdf:first/rdf:rest chains)
+ * - Observation sets
+ * - All observations and their properties
  */
 function exportCubeQuery(graphUri, cubeUri) {
+    const safeGraph = validateUri(graphUri);
+    const safeCube = validateUri(cubeUri);
     return `${PREFIXES}
 CONSTRUCT { ?s ?p ?o }
 WHERE {
-  GRAPH <${graphUri}> {
+  GRAPH <${safeGraph}> {
     {
-      BIND(<${cubeUri}> AS ?s)
-      <${cubeUri}> ?p ?o .
+      # Cube direct properties
+      BIND(<${safeCube}> AS ?s)
+      <${safeCube}> ?p ?o .
     }
     UNION
     {
-      <${cubeUri}> cube:observationConstraint ?shape .
-      ?shape (<>|!<>)* ?s .
-      ?s ?p ?o .
+      # Blank node properties attached to the cube
+      <${safeCube}> ?p1 ?bn .
+      FILTER(isBlank(?bn))
+      ?bn ?p ?o .
+      BIND(?bn AS ?s)
     }
     UNION
     {
-      <${cubeUri}> cube:observationSet ?set .
+      # SHACL NodeShape (observationConstraint)
+      <${safeCube}> cube:observationConstraint ?shape .
+      ?shape ?p ?o .
+      BIND(?shape AS ?s)
+    }
+    UNION
+    {
+      # SHACL PropertyShapes
+      <${safeCube}> cube:observationConstraint ?shape .
+      ?shape sh:property ?propShape .
+      ?propShape ?p ?o .
+      BIND(?propShape AS ?s)
+    }
+    UNION
+    {
+      # RDF list items (sh:in lists)
+      <${safeCube}> cube:observationConstraint ?shape .
+      ?shape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?p ?o .
+      BIND(?list AS ?s)
+    }
+    UNION
+    {
+      # Observation sets
+      <${safeCube}> cube:observationSet ?set .
       ?set ?p ?o .
       BIND(?set AS ?s)
     }
     UNION
     {
-      <${cubeUri}> cube:observationSet/cube:observation ?obs .
+      # Observations
+      <${safeCube}> cube:observationSet/cube:observation ?obs .
       ?obs ?p ?o .
       BIND(?obs AS ?s)
     }
@@ -138,13 +222,15 @@ WHERE {
 function deleteObservationsQuery(graphUri, cubeUri, limit = 50000) {
     // Note: limit parameter kept for API compatibility but not used
     // Fuseki handles large deletions efficiently
+    const safeGraph = validateUri(graphUri);
+    const safeCube = validateUri(cubeUri);
     return `${PREFIXES}
-WITH <${graphUri}>
+WITH <${safeGraph}>
 DELETE {
   ?obs ?p ?o .
 }
 WHERE {
-  <${cubeUri}> cube:observationSet/cube:observation ?obs .
+  <${safeCube}> cube:observationSet/cube:observation ?obs .
   ?obs ?p ?o .
 }`;
 }
@@ -153,13 +239,15 @@ WHERE {
  * Delete cube - Step 2: Delete observation set links
  */
 function deleteObservationLinksQuery(graphUri, cubeUri) {
+    const safeGraph = validateUri(graphUri);
+    const safeCube = validateUri(cubeUri);
     return `${PREFIXES}
-WITH <${graphUri}>
+WITH <${safeGraph}>
 DELETE {
   ?set cube:observation ?obs .
 }
 WHERE {
-  <${cubeUri}> cube:observationSet ?set .
+  <${safeCube}> cube:observationSet ?set .
   ?set cube:observation ?obs .
 }`;
 }
@@ -167,40 +255,61 @@ WHERE {
 /**
  * Delete cube - Step 3: Delete remaining metadata
  */
+/**
+ * Delete cube metadata including:
+ * - Cube direct properties
+ * - Blank node properties
+ * - SHACL NodeShapes (observationConstraint)
+ * - SHACL PropertyShapes (sh:property)
+ * - RDF Lists (sh:in lists with rdf:first/rdf:rest chains)
+ * - Observation sets (the set itself, not the observation data)
+ */
 function deleteCubeMetadataQuery(graphUri, cubeUri) {
+    const safeGraph = validateUri(graphUri);
+    const safeCube = validateUri(cubeUri);
     return `${PREFIXES}
-WITH <${graphUri}>
+WITH <${safeGraph}>
 DELETE {
   ?s ?p ?o .
 }
 WHERE {
   {
-    <${cubeUri}> ?p ?o .
-    BIND(<${cubeUri}> AS ?s)
+    <${safeCube}> ?p ?o .
+    BIND(<${safeCube}> AS ?s)
   }
   UNION
   {
-    <${cubeUri}> ?p1 ?bn .
+    <${safeCube}> ?p1 ?bn .
     FILTER(isBlank(?bn))
     ?bn ?p ?o .
     BIND(?bn AS ?s)
   }
   UNION
   {
-    <${cubeUri}> cube:observationConstraint ?shape .
+    <${safeCube}> cube:observationConstraint ?shape .
     ?shape ?p ?o .
     BIND(?shape AS ?s)
   }
   UNION
   {
-    <${cubeUri}> cube:observationConstraint ?shape .
+    <${safeCube}> cube:observationConstraint ?shape .
     ?shape sh:property ?propShape .
     ?propShape ?p ?o .
     BIND(?propShape AS ?s)
   }
   UNION
   {
-    <${cubeUri}> cube:observationSet ?set .
+    # RDF list items (sh:in lists) - prevents orphaned list nodes
+    <${safeCube}> cube:observationConstraint ?shape .
+    ?shape sh:property ?propShape .
+    ?propShape sh:in ?list .
+    ?list rdf:rest*/rdf:first ?item .
+    ?list ?p ?o .
+    BIND(?list AS ?s)
+  }
+  UNION
+  {
+    <${safeCube}> cube:observationSet ?set .
     ?set ?p ?o .
     BIND(?set AS ?s)
   }
@@ -210,13 +319,18 @@ WHERE {
 /**
  * Count remaining observations for a cube
  */
+/**
+ * Count remaining observations for a cube.
+ * Counts distinct observations (not triples) to give an accurate count.
+ */
 function countObservationsQuery(graphUri, cubeUri) {
+    const safeGraph = validateUri(graphUri);
+    const safeCube = validateUri(cubeUri);
     return `${PREFIXES}
-SELECT (COUNT(*) AS ?count)
+SELECT (COUNT(DISTINCT ?obs) AS ?count)
 WHERE {
-  GRAPH <${graphUri}> {
-    <${cubeUri}> cube:observationSet/cube:observation ?obs .
-    ?obs ?p ?o .
+  GRAPH <${safeGraph}> {
+    <${safeCube}> cube:observationSet/cube:observation ?obs .
   }
 }`;
 }
@@ -225,10 +339,12 @@ WHERE {
  * Check if cube exists
  */
 function cubeExistsQuery(graphUri, cubeUri) {
+    const safeGraph = validateUri(graphUri);
+    const safeCube = validateUri(cubeUri);
     return `${PREFIXES}
 ASK WHERE {
-  GRAPH <${graphUri}> {
-    <${cubeUri}> a cube:Cube .
+  GRAPH <${safeGraph}> {
+    <${safeCube}> a cube:Cube .
   }
 }`;
 }
@@ -237,10 +353,11 @@ ASK WHERE {
  * Count triples in graph
  */
 function countTriplesQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `
 SELECT (COUNT(*) AS ?count)
 WHERE {
-  GRAPH <${graphUri}> {
+  GRAPH <${safeGraph}> {
     ?s ?p ?o .
   }
 }`;
@@ -252,11 +369,16 @@ WHERE {
  * No specific cube URI is required - it works on all cubes in the graph
  */
 function deleteAllOldVersionsQuery(graphUri, versionsToKeep = 2) {
+    const safeGraph = validateUri(graphUri);
+    const safeKeep = parseInt(versionsToKeep, 10);
+    if (isNaN(safeKeep) || safeKeep < 1) {
+        throw new Error('versionsToKeep must be a positive integer');
+    }
     return `${PREFIXES}
-# WARNING: This query deletes ALL cube versions except the newest ${versionsToKeep} per base cube
+# WARNING: This query deletes ALL cube versions except the newest ${safeKeep} per base cube
 # Make sure to backup data before running!
 
-WITH <${graphUri}>
+WITH <${safeGraph}>
 DELETE {
   ?cube ?p1 ?o1 .
   ?shape ?shapeP ?shapeO .
@@ -265,7 +387,7 @@ DELETE {
   ?obs ?obsP ?obsO .
 }
 WHERE {
-  # Find cubes to delete: those with rank > ${versionsToKeep} (at least ${versionsToKeep} newer versions exist)
+  # Find cubes to delete: those with rank > ${safeKeep} (at least ${safeKeep} newer versions exist)
   ?cube a cube:Cube .
 
   # Only process cubes that follow the /baseCube/version URI pattern
@@ -275,8 +397,8 @@ WHERE {
   BIND(xsd:integer(REPLACE(STR(?cube), "^.*/([0-9]+)/?$", "$1")) AS ?v)
   BIND(REPLACE(STR(?cube), "^(.*)/[0-9]+/?$", "$1") AS ?baseStr)
 
-  # Filter: only delete cubes where at least ${versionsToKeep} newer versions exist (rank > ${versionsToKeep})
-  ${generateNewerVersionsFilter(versionsToKeep)}
+  # Filter: only delete cubes where at least ${safeKeep} newer versions exist (rank > ${safeKeep})
+  ${generateNewerVersionsFilter(safeKeep)}
 
   # Delete all related triples for selected cubes
   {
@@ -338,12 +460,13 @@ ${distinctFilters.length > 0 ? '\n' + distinctFilters.join('\n') : ''}
  * Query to get a summary of all orphan objects by type
  */
 function findOrphansSummaryQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `${PREFIXES}
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 
 SELECT ?orphanType (COUNT(DISTINCT ?orphan) AS ?count)
 WHERE {
-  GRAPH <${graphUri}> {
+  GRAPH <${safeGraph}> {
     {
       # Orphan Observation Sets
       ?orphan cube:observation ?someObs .
@@ -374,11 +497,12 @@ ORDER BY ?orphanType`;
  * Query to find orphan observation sets with details
  */
 function findOrphanObservationSetsQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `${PREFIXES}
 
 SELECT ?orphanSet (COUNT(DISTINCT ?obs) AS ?observationCount) (COUNT(?p) AS ?totalTriples)
 WHERE {
-  GRAPH <${graphUri}> {
+  GRAPH <${safeGraph}> {
     ?orphanSet cube:observation ?someObs .
     FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
     ?orphanSet ?p ?o .
@@ -394,12 +518,13 @@ LIMIT 100`;
  * Query to find orphan SHACL shapes
  */
 function findOrphanShapesQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `${PREFIXES}
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 
 SELECT ?orphanShape ?shapeType (COUNT(?p) AS ?tripleCount)
 WHERE {
-  GRAPH <${graphUri}> {
+  GRAPH <${safeGraph}> {
     {
       ?orphanShape a sh:NodeShape .
       BIND("NodeShape" AS ?shapeType)
@@ -423,9 +548,10 @@ LIMIT 100`;
  * Query to delete orphan observation sets and their observations
  */
 function deleteOrphanObservationSetsQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `${PREFIXES}
 
-WITH <${graphUri}>
+WITH <${safeGraph}>
 DELETE {
   ?orphanSet ?setP ?setO .
   ?obs ?obsP ?obsO .
@@ -445,10 +571,11 @@ WHERE {
  * Query to delete orphan SHACL shapes
  */
 function deleteOrphanShapesQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `${PREFIXES}
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 
-WITH <${graphUri}>
+WITH <${safeGraph}>
 DELETE {
   ?orphanShape ?p ?o .
   ?propShape ?propP ?propO .
@@ -476,10 +603,11 @@ WHERE {
  * Query to delete ALL orphans (sets, shapes) in one operation
  */
 function deleteAllOrphansQuery(graphUri) {
+    const safeGraph = validateUri(graphUri);
     return `${PREFIXES}
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 
-WITH <${graphUri}>
+WITH <${safeGraph}>
 DELETE {
   ?orphan ?p ?o .
   ?child ?childP ?childO .
@@ -518,6 +646,7 @@ WHERE {
 
 module.exports = {
     PREFIXES,
+    validateUri,
     listCubeVersionsQuery,
     identifyDeletionsQuery,
     previewCubeQuery,

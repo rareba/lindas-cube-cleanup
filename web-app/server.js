@@ -10,6 +10,62 @@ const AdmZip = require('adm-zip');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// =============================================================================
+// API SECURITY: Toggle destructive APIs on/off via environment variable
+// Set ENABLE_DESTRUCTIVE_API=true to enable deletion endpoints
+// Set API_AUTH_TOKEN to require a bearer token for destructive operations
+// =============================================================================
+const ENABLE_DESTRUCTIVE_API = process.env.ENABLE_DESTRUCTIVE_API === 'true';
+const API_AUTH_TOKEN = process.env.API_AUTH_TOKEN || null;
+
+/**
+ * Middleware to gate destructive API endpoints.
+ * Blocks delete/update operations unless explicitly enabled via environment variable.
+ * When API_AUTH_TOKEN is set, requires Bearer token authentication.
+ */
+function requireDestructiveAccess(req, res, next) {
+    if (!ENABLE_DESTRUCTIVE_API) {
+        return res.status(403).json({
+            error: 'Destructive API endpoints are disabled',
+            detail: 'Set ENABLE_DESTRUCTIVE_API=true environment variable to enable deletion operations',
+            endpoint: req.path
+        });
+    }
+    if (API_AUTH_TOKEN) {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || authHeader !== `Bearer ${API_AUTH_TOKEN}`) {
+            return res.status(401).json({
+                error: 'Authentication required',
+                detail: 'Provide a valid Bearer token in the Authorization header'
+            });
+        }
+    }
+    next();
+}
+
+/**
+ * Validate a URI parameter to prevent SPARQL injection.
+ * Returns sanitized URI or throws an error.
+ */
+function validateUriParam(uri, paramName) {
+    if (!uri || typeof uri !== 'string') {
+        throw new Error(`${paramName} must be a non-empty string`);
+    }
+    uri = uri.trim();
+    if (!/^https?:\/\//.test(uri)) {
+        throw new Error(`${paramName} has invalid URI scheme`);
+    }
+    const dangerousChars = /[<>"{}|\\^`\n\r\t]/;
+    if (dangerousChars.test(uri)) {
+        throw new Error(`${paramName} contains invalid characters`);
+    }
+    return uri;
+}
+
+// Log API security state on startup
+console.log(`[Security] Destructive API endpoints: ${ENABLE_DESTRUCTIVE_API ? 'ENABLED' : 'DISABLED'}`);
+console.log(`[Security] API auth token: ${API_AUTH_TOKEN ? 'CONFIGURED' : 'NOT SET (no auth required when destructive API is enabled)'}`);
+
 // Backup directory
 const BACKUP_DIR = path.join(__dirname, 'backups');
 const BACKUP_RETENTION_DAYS = 7;
@@ -1002,7 +1058,7 @@ app.post('/api/triplestore/query', async (req, res) => {
 });
 
 // Import data to any triplestore
-app.post('/api/triplestore/import', async (req, res) => {
+app.post('/api/triplestore/import', requireDestructiveAccess, async (req, res) => {
     try {
         const { type, mode, baseUrl, dataset, database, repository, username, password, graphUri, triples } = req.body;
 
@@ -1266,7 +1322,7 @@ app.post('/api/lindas/download-graph', async (req, res) => {
 });
 
 // Import triples into Fuseki
-app.post('/api/fuseki/import', async (req, res) => {
+app.post('/api/fuseki/import', requireDestructiveAccess, async (req, res) => {
     try {
         const { endpoint, dataset, graphUri, triples } = req.body;
         const dataEndpoint = `${endpoint}/${dataset}/data`;
@@ -1571,9 +1627,11 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
 });
 
 // Delete observations - Query 07
-app.post('/api/cubes/delete-observations', async (req, res) => {
+app.post('/api/cubes/delete-observations', requireDestructiveAccess, async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const safeGraphUri = validateUriParam(graphUri, 'graphUri');
+        const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
@@ -1591,13 +1649,13 @@ app.post('/api/cubes/delete-observations', async (req, res) => {
             PREFIX cube: <https://cube.link/>
 
             DELETE {
-                GRAPH <${graphUri}> {
+                GRAPH <${safeGraphUri}> {
                     ?obs ?p ?o .
                 }
             }
             WHERE {
-                GRAPH <${graphUri}> {
-                    <${cubeUri}> cube:observationSet ?obsSet .
+                GRAPH <${safeGraphUri}> {
+                    <${safeCubeUri}> cube:observationSet ?obsSet .
                     ?obsSet cube:observation ?obs .
                     ?obs ?p ?o .
                 }
@@ -1612,9 +1670,11 @@ app.post('/api/cubes/delete-observations', async (req, res) => {
 });
 
 // Delete observation links - Query 08
-app.post('/api/cubes/delete-observation-links', async (req, res) => {
+app.post('/api/cubes/delete-observation-links', requireDestructiveAccess, async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const safeGraphUri = validateUriParam(graphUri, 'graphUri');
+        const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
@@ -1632,13 +1692,13 @@ app.post('/api/cubes/delete-observation-links', async (req, res) => {
             PREFIX cube: <https://cube.link/>
 
             DELETE {
-                GRAPH <${graphUri}> {
+                GRAPH <${safeGraphUri}> {
                     ?obsSet cube:observation ?obs .
                 }
             }
             WHERE {
-                GRAPH <${graphUri}> {
-                    <${cubeUri}> cube:observationSet ?obsSet .
+                GRAPH <${safeGraphUri}> {
+                    <${safeCubeUri}> cube:observationSet ?obsSet .
                     ?obsSet cube:observation ?obs .
                 }
             }
@@ -1652,9 +1712,11 @@ app.post('/api/cubes/delete-observation-links', async (req, res) => {
 });
 
 // Delete cube metadata - Query 09
-app.post('/api/cubes/delete-metadata', async (req, res) => {
+app.post('/api/cubes/delete-metadata', requireDestructiveAccess, async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const safeGraphUri = validateUriParam(graphUri, 'graphUri');
+        const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
@@ -1674,21 +1736,21 @@ app.post('/api/cubes/delete-metadata', async (req, res) => {
             PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 
             DELETE {
-                GRAPH <${graphUri}> {
+                GRAPH <${safeGraphUri}> {
                     ?s ?p ?o .
                 }
             }
             WHERE {
-                GRAPH <${graphUri}> {
+                GRAPH <${safeGraphUri}> {
                     {
                         # Cube direct properties
-                        <${cubeUri}> ?p ?o .
-                        BIND(<${cubeUri}> AS ?s)
+                        <${safeCubeUri}> ?p ?o .
+                        BIND(<${safeCubeUri}> AS ?s)
                     }
                     UNION
                     {
                         # Blank node properties
-                        <${cubeUri}> ?p1 ?bn .
+                        <${safeCubeUri}> ?p1 ?bn .
                         FILTER(isBlank(?bn))
                         ?bn ?p ?o .
                         BIND(?bn AS ?s)
@@ -1696,14 +1758,14 @@ app.post('/api/cubes/delete-metadata', async (req, res) => {
                     UNION
                     {
                         # Observation constraint shape
-                        <${cubeUri}> cube:observationConstraint ?shape .
+                        <${safeCubeUri}> cube:observationConstraint ?shape .
                         ?shape ?p ?o .
                         BIND(?shape AS ?s)
                     }
                     UNION
                     {
                         # Property shapes
-                        <${cubeUri}> cube:observationConstraint ?shape .
+                        <${safeCubeUri}> cube:observationConstraint ?shape .
                         ?shape sh:property ?propShape .
                         ?propShape ?p ?o .
                         BIND(?propShape AS ?s)
@@ -1711,7 +1773,7 @@ app.post('/api/cubes/delete-metadata', async (req, res) => {
                     UNION
                     {
                         # RDF list items
-                        <${cubeUri}> cube:observationConstraint ?shape .
+                        <${safeCubeUri}> cube:observationConstraint ?shape .
                         ?shape sh:property ?propShape .
                         ?propShape sh:in ?list .
                         ?list rdf:rest*/rdf:first ?item .
@@ -1721,7 +1783,7 @@ app.post('/api/cubes/delete-metadata', async (req, res) => {
                     UNION
                     {
                         # Observation set
-                        <${cubeUri}> cube:observationSet ?obsSet .
+                        <${safeCubeUri}> cube:observationSet ?obsSet .
                         ?obsSet ?p ?o .
                         BIND(?obsSet AS ?s)
                     }
@@ -1909,6 +1971,14 @@ app.post('/api/query/execute', async (req, res) => {
 
         if (!query || !query.trim()) {
             return res.status(400).json({ error: 'Query is required' });
+        }
+
+        // Block UPDATE queries unless destructive API is enabled
+        if (queryType === 'update' && !ENABLE_DESTRUCTIVE_API) {
+            return res.status(403).json({
+                error: 'SPARQL UPDATE queries are disabled',
+                detail: 'Set ENABLE_DESTRUCTIVE_API=true environment variable to enable update operations'
+            });
         }
 
         const startTime = Date.now();
@@ -2753,7 +2823,7 @@ app.post('/api/backup/restore-to', async (req, res) => {
 });
 
 // Delete a backup (deletes self-contained ZIP file)
-app.delete('/api/backup/:backupId', (req, res) => {
+app.delete('/api/backup/:backupId', requireDestructiveAccess, (req, res) => {
     try {
         const { backupId } = req.params;
 

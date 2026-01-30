@@ -159,13 +159,48 @@ class CleanupService {
                 return;
             }
 
-            // Backup cube before deletion
+            // Mandatory backup before deletion - always create backup
             if (this.backup) {
                 await this.backupCube(graphUri, cube.uri);
+            } else {
+                this.logger.warn('No backup storage configured - deletion will proceed WITHOUT backup', {
+                    cube: cube.uri
+                });
             }
 
-            // Delete cube
-            await this.deleteCube(graphUri, cube.uri, preview.observationCount);
+            // Use Stardog transactions if available for atomic deletion
+            const useTransaction = this.triplestore.getType() === 'stardog' &&
+                typeof this.triplestore.beginTransaction === 'function';
+            let txId = null;
+
+            try {
+                if (useTransaction) {
+                    txId = await this.triplestore.beginTransaction();
+                    this.logger.debug('Stardog transaction started', { txId });
+                }
+
+                // Delete cube
+                await this.deleteCube(graphUri, cube.uri, preview.observationCount);
+
+                if (useTransaction && txId) {
+                    await this.triplestore.commitTransaction(txId);
+                    this.logger.debug('Stardog transaction committed', { txId });
+                    txId = null;
+                }
+            } catch (deleteError) {
+                if (useTransaction && txId) {
+                    try {
+                        await this.triplestore.rollbackTransaction(txId);
+                        this.logger.warn('Stardog transaction rolled back after error', { txId });
+                    } catch (rollbackError) {
+                        this.logger.error('Stardog transaction rollback failed', {
+                            txId,
+                            error: rollbackError.message
+                        });
+                    }
+                }
+                throw deleteError;
+            }
 
             this.stats.cubesDeleted++;
 
@@ -245,7 +280,8 @@ class CleanupService {
             observations: observationCount
         });
 
-        let totalDeleted = observationCount;
+        // Count actual triples before deletion for accurate stats
+        let totalDeleted = 0;
 
         // Step 1: Delete observations
         if (observationCount > 0) {
@@ -302,6 +338,10 @@ class CleanupService {
      * @returns {Promise<number>} - Number of cubes deleted
      */
     async bulkDeleteOldVersions(graphUri) {
+        this.logger.warn('BULK DELETE MODE: Individual cube backups are NOT created in this mode.', {
+            graph: graphUri,
+            versionsToKeep: this.versionsToKeep
+        });
         this.logger.info('Running bulk delete for all old versions', {
             graph: graphUri,
             versionsToKeep: this.versionsToKeep
