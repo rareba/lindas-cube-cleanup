@@ -36,6 +36,9 @@ nul
 
 # Config files with credentials
 cleanup-service/config/config.json
+*.credentials.json
+.env*
+credentials/
 
 # Package lock files (keep web-app one)
 cleanup-service/package-lock.json
