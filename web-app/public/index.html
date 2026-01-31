@@ -478,6 +478,30 @@
 
                                 <div class="form-group checkbox-group">
                                     <label class="checkbox-label">
+                                        <input type="checkbox" id="include-metadata-backup" checked>
+                                        <span>Include metadata in backup (default: enabled)</span>
+                                        <span class="hint">Cube properties, SHACL shapes, and structural information. Disabling backs up observations only.</span>
+                                    </label>
+                                </div>
+
+                                <div class="form-group checkbox-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="include-orphans-backup" checked>
+                                        <span>Include orphan triples in backup (default: enabled)</span>
+                                        <span class="hint">Orphan triples are data linked to deleted cubes that may be unused</span>
+                                    </label>
+                                </div>
+
+                                <div class="form-group checkbox-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="cleanup-orphans" checked>
+                                        <span>Clean up orphan triples after deletion (default: enabled)</span>
+                                        <span class="hint">Removes orphaned observation sets and SHACL shapes</span>
+                                    </label>
+                                </div>
+
+                                <div class="form-group checkbox-group">
+                                    <label class="checkbox-label">
                                         <input type="checkbox" id="confirm-deletion">
                                         <span>I understand that this will permanently delete the selected cube versions</span>
                                     </label>
@@ -682,12 +706,12 @@
 
                     <div class="card">
                         <h3>Import Backup File</h3>
-                        <p class="description">Upload a backup file (.lindas.json or .nt) to restore data.</p>
+                        <p class="description">Upload a backup file (.zip, .json, or .nt) to restore data. ZIP files contain complete backup information including metadata and orphan triples.</p>
 
                         <div class="upload-area" id="backup-upload-area">
                             <div class="upload-icon">&#128451;</div>
                             <p>Drag and drop a backup file here, or click to select</p>
-                            <input type="file" id="backup-file-input" accept=".json,.nt,.ntriples" style="display: none;">
+                            <input type="file" id="backup-file-input" accept=".zip,.json,.nt,.ntriples" style="display: none;">
                             <button id="btn-select-backup-file" class="btn btn-secondary">Select File</button>
                         </div>
 
@@ -930,20 +954,49 @@ Rank 3+:  DELETE (older versions)</pre>
                                 <p>Before any deletion, the system automatically:</p>
                                 <ol class="doc-list numbered">
                                     <li>Exports all triples for the cube using a CONSTRUCT query</li>
-                                    <li>Saves as N-Triples file with timestamp</li>
-                                    <li>Stores metadata (cube URI, graph, deletion date)</li>
+                                    <li>Creates a self-contained ZIP file with manifest and data</li>
+                                    <li>Stores metadata (cube URI, graph, deletion date, orphan info)</li>
                                 </ol>
 
-                                <h4>Export Package Format (v2.0)</h4>
-                                <p>Exported backups include comprehensive metadata for easy restoration:</p>
+                                <h4>ZIP Backup Format (v4.1)</h4>
+                                <p>Backups are stored as ZIP files containing:</p>
+                                <pre class="code-block">backup_{id}.zip
+├── manifest.json      # Complete metadata for restoration
+├── data.nt            # Cube data (or data_1.nt, data_2.nt for multi-cube)
+├── orphans.nt         # Orphan triples (if includeOrphans was true)
+└── README.txt         # Human-readable backup information</pre>
+
+                                <h4>Manifest Structure</h4>
                                 <pre class="code-block">{
-  "packageVersion": "2.0",
-  "exportedAt": "2026-01-12T...",
-  "source": { "endpoint": "...", "type": "fuseki" },
-  "cube": { "uri": "...", "version": 7, "graphUri": "..." },
-  "restore": { "targetGraph": "...", "instructions": [...] },
-  "stats": { "tripleCount": 12345 },
-  "data": "... N-Triples content ..."
+  "formatVersion": "4.1",
+  "backupId": "...",
+  "createdAt": "2026-01-31T...",
+  "source": {
+    "endpoint": "...",
+    "dataset": "...",
+    "triplestoreType": "fuseki"
+  },
+  "graph": { "uri": "..." },
+  "cubes": [
+    {
+      "uri": "...",
+      "version": 7,
+      "dataFile": "data.nt",
+      "tripleCount": 12345
+    }
+  ],
+  "stats": {
+    "cubeCount": 1,
+    "totalTripleCount": 12345,
+    "includesMetadata": true,
+    "includesOrphans": true,
+    "orphanTripleCount": 150
+  },
+  "orphans": {
+    "included": true,
+    "tripleCount": 150,
+    "stats": { "ObservationSet": 5, "NodeShape": 2 }
+  }
 }</pre>
 
                                 <h4>Retention Policy</h4>
@@ -1247,6 +1300,6 @@ npm run dev</pre>
         </main>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=2"></script>
 </body>
 </html>

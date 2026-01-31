@@ -55,11 +55,26 @@ function validateUriParam(uri, paramName) {
     if (!/^https?:\/\//.test(uri)) {
         throw new Error(`${paramName} has invalid URI scheme`);
     }
-    const dangerousChars = /[<>"{}|\\^`\n\r\t]/;
+    const dangerousChars = /[<>", "{}|\\^`\n\r\t]/;
     if (dangerousChars.test(uri)) {
         throw new Error(`${paramName} contains invalid characters`);
     }
     return uri;
+}
+
+/**
+ * Validate a backup ID parameter to prevent path traversal attacks.
+ * Only allows alphanumeric characters, hyphens, and underscores.
+ * Throws an error if the backup ID contains invalid characters.
+ */
+function validateBackupId(backupId) {
+    if (!backupId || typeof backupId !== 'string') {
+        throw new Error('Backup ID is required');
+    }
+    // Only allow alphanumeric, hyphens, and underscores
+    if (!/^[a-zA-Z0-9_-]+$/.test(backupId)) {
+        throw new Error('Invalid backup ID format');
+    }
 }
 
 // Log API security state on startup
@@ -440,38 +455,89 @@ async function checkTriplestoreConnection(config) {
             // GraphDB: GET /rest/repositories
             checkUrl = `${base}/rest/repositories`;
             try {
+                console.log(`GraphDB: Connecting to ${checkUrl}`);
                 const response = await fetch(checkUrl, {
                     method: 'GET',
                     headers: { 'Accept': 'application/json', ...authHeaders }
                 });
+                console.log(`GraphDB response status: ${response.status}`);
                 if (response.ok) {
                     const data = await response.json();
+                    console.log(`GraphDB repositories:`, data);
                     availableDatasets = data.map(r => r.id);
-                    return { connected: true, type: 'graphdb', mode, baseUrl: base, repositories: availableDatasets };
+                    return {
+                        connected: true,
+                        type: 'graphdb',
+                        mode,
+                        baseUrl: base,
+                        repositories: availableDatasets,
+                        message: `Connected! Available repositories: ${availableDatasets.join(', ') || 'none'}`
+                    };
+                } else {
+                    const errorText = await response.text();
+                    console.error(`GraphDB connection failed: ${response.status} - ${errorText}`);
+                    return {
+                        connected: false,
+                        type: 'graphdb',
+                        mode,
+                        baseUrl: base,
+                        error: `Connection failed: ${response.status} - ${errorText || response.statusText}`
+                    };
                 }
             } catch (err) {
-                // Continue to return not connected
+                console.error(`GraphDB connection error:`, err);
+                return {
+                    connected: false,
+                    type: 'graphdb',
+                    mode,
+                    baseUrl: base,
+                    error: `Connection error: ${err.message}. Make sure GraphDB is running at ${base}`
+                };
             }
-            break;
 
         case 'fuseki':
         default:
             // Fuseki: GET /$/datasets
             checkUrl = `${base}/$/datasets`;
             try {
+                console.log(`Fuseki: Connecting to ${checkUrl}`);
                 const response = await fetch(checkUrl, {
                     method: 'GET',
                     headers: { 'Accept': 'application/json', ...authHeaders }
                 });
+                console.log(`Fuseki response status: ${response.status}`);
                 if (response.ok) {
                     const data = await response.json();
                     availableDatasets = data.datasets || [];
-                    return { connected: true, type: 'fuseki', mode, baseUrl: base, datasets: availableDatasets };
+                    return {
+                        connected: true,
+                        type: 'fuseki',
+                        mode,
+                        baseUrl: base,
+                        datasets: availableDatasets,
+                        message: `Connected! Available datasets: ${availableDatasets.map(d => d.ds.name).join(', ') || 'none'}`
+                    };
+                } else {
+                    const errorText = await response.text();
+                    console.error(`Fuseki connection failed: ${response.status} - ${errorText}`);
+                    return {
+                        connected: false,
+                        type: 'fuseki',
+                        mode,
+                        baseUrl: base,
+                        error: `Connection failed: ${response.status} - ${errorText || response.statusText}`
+                    };
                 }
             } catch (err) {
-                // Continue to return not connected
+                console.error(`Fuseki connection error:`, err);
+                return {
+                    connected: false,
+                    type: 'fuseki',
+                    mode,
+                    baseUrl: base,
+                    error: `Connection error: ${err.message}. Make sure Fuseki is running at ${base}`
+                };
             }
-            break;
     }
 
     return { connected: false, type, mode, baseUrl: base, error: 'Could not connect to triplestore' };
@@ -562,13 +628,160 @@ function createExportPackage(triples, metadata) {
  * - manifest.json: Complete metadata for identification and restore
  * - data.nt: The actual triples in N-Triples format
  */
+// =============================================================================
+// ORPHAN DETECTION QUERIES
+// =============================================================================
+
+const ORPHAN_PREFIXES = `
+PREFIX cube: <https://cube.link/>
+PREFIX schema: <http://schema.org/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+`;
+
+/**
+ * Query to find orphan observation sets with their observations (CONSTRUCT for backup)
+ */
+function constructOrphanObservationSetsQuery(graphUri) {
+    return `${ORPHAN_PREFIXES}
+CONSTRUCT { ?s ?p ?o }
+WHERE {
+  GRAPH <${graphUri}> {
+    {
+      # Orphan observation sets
+      ?orphanSet cube:observation ?someObs .
+      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+      ?orphanSet ?p ?o .
+      BIND(?orphanSet AS ?s)
+    }
+    UNION
+    {
+      # Observations in orphan sets
+      ?orphanSet cube:observation ?someObs .
+      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+      ?orphanSet cube:observation ?obs .
+      ?obs ?p ?o .
+      BIND(?obs AS ?s)
+    }
+  }
+}`;
+}
+
+/**
+ * Query to find orphan SHACL shapes (CONSTRUCT for backup)
+ */
+function constructOrphanShapesQuery(graphUri) {
+    return `${ORPHAN_PREFIXES}
+CONSTRUCT { ?s ?p ?o }
+WHERE {
+  GRAPH <${graphUri}> {
+    {
+      # Orphan NodeShapes
+      ?orphanShape a sh:NodeShape .
+      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+      ?orphanShape ?p ?o .
+      BIND(?orphanShape AS ?s)
+    }
+    UNION
+    {
+      # Orphan PropertyShapes
+      ?orphanShape a sh:PropertyShape .
+      FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+      ?orphanShape ?p ?o .
+      BIND(?orphanShape AS ?s)
+    }
+  }
+}`;
+}
+
+/**
+ * Query to get summary of orphan objects by type
+ */
+function findOrphansSummaryQuery(graphUri) {
+    return `${ORPHAN_PREFIXES}
+SELECT ?orphanType (COUNT(DISTINCT ?orphan) AS ?count)
+WHERE {
+  GRAPH <${graphUri}> {
+    {
+      # Orphan Observation Sets
+      ?orphan cube:observation ?someObs .
+      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
+      BIND("ObservationSet" AS ?orphanType)
+    }
+    UNION
+    {
+      # Orphan NodeShapes
+      ?orphan a sh:NodeShape .
+      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
+      BIND("NodeShape" AS ?orphanType)
+    }
+    UNION
+    {
+      # Orphan PropertyShapes
+      ?orphan a sh:PropertyShape .
+      FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
+      BIND("PropertyShape" AS ?orphanType)
+    }
+  }
+}
+GROUP BY ?orphanType
+ORDER BY ?orphanType`;
+}
+
+/**
+ * Query to delete orphan observation sets and their observations
+ */
+function deleteOrphanObservationSetsQuery(graphUri) {
+    return `${ORPHAN_PREFIXES}
+WITH <${graphUri}>
+DELETE {
+  ?orphanSet ?setP ?setO .
+  ?obs ?obsP ?obsO .
+}
+WHERE {
+  ?orphanSet cube:observation ?someObs .
+  FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+  ?orphanSet ?setP ?setO .
+  OPTIONAL {
+    ?orphanSet cube:observation ?obs .
+    ?obs ?obsP ?obsO .
+  }
+}`;
+}
+
+/**
+ * Query to delete orphan SHACL shapes
+ */
+function deleteOrphanShapesQuery(graphUri) {
+    return `${ORPHAN_PREFIXES}
+WITH <${graphUri}>
+DELETE {
+  ?orphanShape ?p ?o .
+}
+WHERE {
+  {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+    ?orphanShape ?p ?o .
+  }
+  UNION
+  {
+    ?orphanShape a sh:PropertyShape .
+    FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+    ?orphanShape ?p ?o .
+  }
+}`;
+}
+
 /**
  * Create a self-contained ZIP backup that can contain one or more cubes
  * @param {Array|Object} cubesData - Single cube data {triples, cubeUri, ...} or array of cube data
  * @param {Object} metadata - Common metadata (graphUri, endpoint, etc.)
+ * @param {Object} options - Backup options { includeMetadata: boolean, includeOrphans: boolean, orphanTriples: string, orphanStats: Object }
  * @returns {Promise} Resolves with backup info
  */
-function createZipBackup(cubesData, metadata) {
+function createZipBackup(cubesData, metadata, options = {}) {
     return new Promise((resolve, reject) => {
         try {
             // Normalize to array for consistent handling
@@ -609,10 +822,17 @@ function createZipBackup(cubesData, metadata) {
                 ? `multi_${cubes.length}cubes_${timestamp}`
                 : `${cubeInfos[0].uri.split('/').slice(-2).join('_')}_${timestamp}`;
 
-            // Create manifest with all information needed for restore (v4.0 format)
+            // Calculate options
+            const includeMetadata = options.includeMetadata !== false; // Default to true
+            const orphanStats = options.orphanStats || { totalCount: 0, types: {} };
+            const includeOrphans = options.includeOrphans || false;
+            const orphanTriples = options.orphanTriples || '';
+            const orphanTripleCount = orphanTriples ? orphanTriples.split('\n').filter(line => line.trim()).length : 0;
+
+            // Create manifest with all information needed for restore (v4.1 format with orphan support)
             const manifest = {
                 // Package metadata
-                formatVersion: '4.0',
+                formatVersion: '4.1',
                 formatType: 'lindas-cube-backup',
                 createdAt: new Date().toISOString(),
                 createdBy: 'LINDAS Cube Manager',
@@ -662,8 +882,10 @@ function createZipBackup(cubesData, metadata) {
                         'Use the LINDAS Cube Manager import function, or:',
                         'For Fuseki: POST each data file to /{dataset}/data?graph=<graphUri>',
                         'For Stardog: POST each data file to /{database}?graph=<graphUri>',
-                        'For GraphDB: POST each data file to /repositories/{repo}/statements?context=<graphUri>'
-                    ]
+                        'For GraphDB: POST each data file to /repositories/{repo}/statements?context=<graphUri>',
+                        includeMetadata ? 'Metadata included: cube properties, SHACL shapes, and structural information.' : 'Metadata excluded: only observations backed up.',
+                        includeOrphans ? 'Orphan triples are included in this backup and will be restored.' : ''
+                    ].filter(Boolean)
                 },
 
                 // Statistics
@@ -671,13 +893,26 @@ function createZipBackup(cubesData, metadata) {
                     cubeCount: cubeInfos.length,
                     totalTripleCount: totalTripleCount,
                     totalDataSize: totalDataSize,
-                    backupId: backupId
+                    backupId: backupId,
+                    includesMetadata: includeMetadata,
+                    includesOrphans: includeOrphans,
+                    orphanTripleCount: orphanTripleCount
                 },
+
+                // Orphan information (v4.1)
+                orphans: includeOrphans ? {
+                    included: true,
+                    tripleCount: orphanTripleCount,
+                    stats: orphanStats,
+                    dataFile: 'orphans.nt'
+                } : undefined,
 
                 // Deletion context (if this was a pre-deletion backup)
                 deletionContext: metadata.deletionContext || {
                     reason: 'Cube version deletion',
-                    deletedAt: new Date().toISOString()
+                    deletedAt: new Date().toISOString(),
+                    includeMetadata: includeMetadata,
+                    includeOrphans: includeOrphans
                 }
             };
 
@@ -716,8 +951,28 @@ function createZipBackup(cubesData, metadata) {
                 archive.append(cubeInfo.triples, { name: cubeInfo.dataFile });
             });
 
+            // Add orphan triples if included
+            if (includeOrphans && orphanTriples) {
+                archive.append(orphanTriples, { name: 'orphans.nt' });
+            }
+
             // Add a README for human readability
             const cubeList = cubeInfos.map(c => `  - ${c.uri} (v${c.version || 'N/A'}, ${c.tripleCount} triples, ${c.dataFile})`).join('\n');
+            const metadataInfo = includeMetadata ? `
+Metadata: INCLUDED
+  - Cube properties (schema:name, schema:dateCreated, etc.)
+  - SHACL NodeShapes (observationConstraint)
+  - SHACL PropertyShapes (sh:property)
+  - RDF Lists (sh:in with rdf:first/rdf:rest chains)
+` : `
+Metadata: EXCLUDED
+  - Only observations and observation sets backed up
+`;
+            const orphanInfo = includeOrphans ? `
+Orphan Triples: ${orphanTripleCount} triples included
+  - Orphan observation sets and observations
+  - Orphan SHACL shapes (NodeShapes, PropertyShapes)
+` : '';
             const readme = `LINDAS Cube Backup
 ==================
 
@@ -725,13 +980,13 @@ Graph: ${metadata.graphUri}
 Created: ${manifest.createdAt}
 Total Cubes: ${cubeInfos.length}
 Total Triples: ${totalTripleCount}
-
+${metadataInfo}${includeOrphans ? `Orphan Triples: ${orphanTripleCount}\n` : ''}
 Cubes in this backup:
 ${cubeList}
-
+${orphanInfo}
 Files in this archive:
 - manifest.json: Complete metadata and restore instructions
-${cubeInfos.map(c => `- ${c.dataFile}: RDF triples for ${c.name}`).join('\n')}
+${cubeInfos.map(c => `- ${c.dataFile}: RDF triples for ${c.name}`).join('\n')}${includeOrphans ? '\n- orphans.nt: Orphan observation sets, observations, and SHACL shapes' : ''}
 - README.txt: This file
 
 To restore this backup:
@@ -763,10 +1018,14 @@ function parseZipBackup(zipPath) {
 
         let manifest = null;
         const dataFiles = {};
+        let orphanTriples = '';
 
         for (const entry of entries) {
             if (entry.entryName === 'manifest.json') {
                 manifest = JSON.parse(entry.getData().toString('utf8'));
+            } else if (entry.entryName === 'orphans.nt') {
+                // Orphan triples file (v4.1+)
+                orphanTriples = entry.getData().toString('utf8');
             } else if (entry.entryName.endsWith('.nt')) {
                 // Collect all .nt data files (data.nt or data_1.nt, data_2.nt, etc.)
                 dataFiles[entry.entryName] = entry.getData().toString('utf8');
@@ -817,12 +1076,16 @@ function parseZipBackup(zipPath) {
                 tripleCount: manifest.stats?.totalTripleCount || manifest.stats?.tripleCount,
                 dataFileSize: manifest.stats?.totalDataSize || manifest.stats?.dataFileSize,
                 backupId: manifest.backupId || manifest.stats?.backupId,
+                // Orphan info (v4.1+)
+                includesOrphans: manifest.stats?.includesOrphans || manifest.orphans?.included || false,
+                orphanTripleCount: manifest.stats?.orphanTripleCount || manifest.orphans?.tripleCount || 0,
                 // Export info
                 createdAt: manifest.createdAt,
                 createdBy: manifest.createdBy
             },
             restore: manifest.restore,
             triples: allTriples,
+            orphanTriples: orphanTriples,
             format: 'n-triples',
             manifest: manifest,
             // Multi-cube support
@@ -1174,6 +1437,9 @@ app.post('/api/lindas/cubes', async (req, res) => {
             return res.status(400).json({ error: 'graphUri is required' });
         }
 
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+
         const query = `
             PREFIX cube: <https://cube.link/>
             PREFIX schema: <http://schema.org/>
@@ -1208,6 +1474,10 @@ app.post('/api/lindas/cubes', async (req, res) => {
 app.post('/api/lindas/download-cube', async (req, res) => {
     try {
         const { graphUri, cubeUri } = req.body;
+
+        // Validate URI parameters to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+        validateUriParam(cubeUri, 'cubeUri');
 
         // Construct query to get all triples for a specific cube
         const query = `
@@ -1297,6 +1567,9 @@ app.post('/api/lindas/download-graph', async (req, res) => {
     try {
         const { graphUri, offset = 0, limit = 100000 } = req.body;
 
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+
         const query = `
             CONSTRUCT { ?s ?p ?o }
             WHERE {
@@ -1350,6 +1623,9 @@ app.post('/api/fuseki/import', requireDestructiveAccess, async (req, res) => {
 app.post('/api/cubes/list-versions', async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
         // Support both endpoint and baseUrl, and dataset/database/repository for different triplestores
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
@@ -1414,6 +1690,9 @@ app.post('/api/cubes/list-versions', async (req, res) => {
 app.post('/api/cubes/count-versions', async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
@@ -1462,6 +1741,9 @@ app.post('/api/cubes/count-versions', async (req, res) => {
 app.post('/api/cubes/identify-deletions', async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
@@ -1554,6 +1836,10 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
 app.post('/api/cubes/preview-deletion', async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+
+        // Validate URI parameters to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+        validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
@@ -1636,14 +1922,31 @@ app.post('/api/cubes/delete-observations', requireDestructiveAccess, async (req,
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
 
-        // Construct triplestore-specific update endpoint
-        let updateEndpoint;
+        // Construct triplestore-specific endpoints
+        let queryEndpoint, updateEndpoint;
         if (triplestoreType === 'graphdb') {
+            queryEndpoint = db ? `${base}/repositories/${db}` : base;
             updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
         } else {
+            queryEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
             updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         }
         const auth = { username, password };
+
+        // Count triples before deletion
+        const countQuery = `
+            PREFIX cube: <https://cube.link/>
+            SELECT (COUNT(*) AS ?count)
+            WHERE {
+                GRAPH <${safeGraphUri}> {
+                    <${safeCubeUri}> cube:observationSet ?obsSet .
+                    ?obsSet cube:observation ?obs .
+                    ?obs ?p ?o .
+                }
+            }
+        `;
+        const countResult = await executeSparqlSelect(queryEndpoint, countQuery, auth);
+        const triplesDeleted = parseInt(countResult.results?.bindings?.[0]?.count?.value) || 0;
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1663,7 +1966,7 @@ app.post('/api/cubes/delete-observations', requireDestructiveAccess, async (req,
         `;
 
         await executeSparqlUpdate(updateEndpoint, query, auth);
-        res.json({ success: true, message: 'Deleted observation triples' });
+        res.json({ success: true, message: 'Deleted observation triples', triplesDeleted });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1679,14 +1982,30 @@ app.post('/api/cubes/delete-observation-links', requireDestructiveAccess, async 
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
 
-        // Construct triplestore-specific update endpoint
-        let updateEndpoint;
+        // Construct triplestore-specific endpoints
+        let queryEndpoint, updateEndpoint;
         if (triplestoreType === 'graphdb') {
+            queryEndpoint = db ? `${base}/repositories/${db}` : base;
             updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
         } else {
+            queryEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
             updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         }
         const auth = { username, password };
+
+        // Count links before deletion
+        const countQuery = `
+            PREFIX cube: <https://cube.link/>
+            SELECT (COUNT(*) AS ?count)
+            WHERE {
+                GRAPH <${safeGraphUri}> {
+                    <${safeCubeUri}> cube:observationSet ?obsSet .
+                    ?obsSet cube:observation ?obs .
+                }
+            }
+        `;
+        const countResult = await executeSparqlSelect(queryEndpoint, countQuery, auth);
+        const triplesDeleted = parseInt(countResult.results?.bindings?.[0]?.count?.value) || 0;
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1705,7 +2024,7 @@ app.post('/api/cubes/delete-observation-links', requireDestructiveAccess, async 
         `;
 
         await executeSparqlUpdate(updateEndpoint, query, auth);
-        res.json({ success: true, message: 'Deleted observation links' });
+        res.json({ success: true, message: 'Deleted observation links', triplesDeleted });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1721,14 +2040,63 @@ app.post('/api/cubes/delete-metadata', requireDestructiveAccess, async (req, res
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
 
-        // Construct triplestore-specific update endpoint
-        let updateEndpoint;
+        // Construct triplestore-specific endpoints
+        let queryEndpoint, updateEndpoint;
         if (triplestoreType === 'graphdb') {
+            queryEndpoint = db ? `${base}/repositories/${db}` : base;
             updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
         } else {
+            queryEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
             updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         }
         const auth = { username, password };
+
+        // Count metadata triples before deletion
+        const countQuery = `
+            PREFIX cube: <https://cube.link/>
+            PREFIX sh: <http://www.w3.org/ns/shacl#>
+            PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+            SELECT (COUNT(*) AS ?count)
+            WHERE {
+                GRAPH <${safeGraphUri}> {
+                    {
+                        <${safeCubeUri}> ?p ?o .
+                    }
+                    UNION
+                    {
+                        <${safeCubeUri}> ?p1 ?bn .
+                        FILTER(isBlank(?bn))
+                        ?bn ?p ?o .
+                    }
+                    UNION
+                    {
+                        <${safeCubeUri}> cube:observationConstraint ?shape .
+                        ?shape ?p ?o .
+                    }
+                    UNION
+                    {
+                        <${safeCubeUri}> cube:observationConstraint ?shape .
+                        ?shape sh:property ?propShape .
+                        ?propShape ?p ?o .
+                    }
+                    UNION
+                    {
+                        <${safeCubeUri}> cube:observationConstraint ?shape .
+                        ?shape sh:property ?propShape .
+                        ?propShape sh:in ?list .
+                        ?list rdf:rest*/rdf:first ?item .
+                        ?list ?p ?o .
+                    }
+                    UNION
+                    {
+                        <${safeCubeUri}> cube:observationSet ?obsSet .
+                        ?obsSet ?p ?o .
+                    }
+                }
+            }
+        `;
+        const countResult = await executeSparqlSelect(queryEndpoint, countQuery, auth);
+        const triplesDeleted = parseInt(countResult.results?.bindings?.[0]?.count?.value) || 0;
 
         const query = `
             PREFIX cube: <https://cube.link/>
@@ -1792,7 +2160,7 @@ app.post('/api/cubes/delete-metadata', requireDestructiveAccess, async (req, res
         `;
 
         await executeSparqlUpdate(updateEndpoint, query, auth);
-        res.json({ success: true, message: 'Deleted cube metadata and shapes' });
+        res.json({ success: true, message: 'Deleted cube metadata and shapes', triplesDeleted });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1802,6 +2170,10 @@ app.post('/api/cubes/delete-metadata', requireDestructiveAccess, async (req, res
 app.post('/api/cubes/count-observations', async (req, res) => {
     try {
         const { endpoint, dataset, graphUri, cubeUri, username, password } = req.body;
+
+        // Validate URI parameters to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+        validateUriParam(cubeUri, 'cubeUri');
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
         const auth = { username, password };
 
@@ -1829,6 +2201,9 @@ app.post('/api/cubes/count-observations', async (req, res) => {
 app.post('/api/cubes/count-triples', async (req, res) => {
     try {
         const { endpoint, dataset, graphUri, username, password } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
         const sparqlEndpoint = dataset ? `${endpoint}/${dataset}/query` : endpoint;
         const auth = { username, password };
 
@@ -1846,7 +2221,7 @@ app.post('/api/cubes/count-triples', async (req, res) => {
     }
 });
 
-// Create Fuseki dataset
+// Create Fuseki dataset (legacy endpoint, use /api/triplestore/create-dataset instead)
 app.post('/api/fuseki/create-dataset', async (req, res) => {
     try {
         const { endpoint, datasetName } = req.body;
@@ -1866,6 +2241,137 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
 
         res.json({ success: true, dataset: datasetName });
     } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generic create dataset/repository endpoint for all triplestore types
+app.post('/api/triplestore/create-dataset', async (req, res) => {
+    try {
+        const { type, baseUrl, dataset, database, repository, username, password } = req.body;
+        const triplestoreType = type || 'fuseki';
+        const authHeaders = buildAuthHeaders(username, password);
+
+        switch (triplestoreType) {
+            case 'fuseki': {
+                const datasetName = dataset || 'lindas';
+                const endpoint = baseUrl || 'http://localhost:3030';
+
+                const response = await fetch(`${endpoint}/$/datasets`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        ...authHeaders
+                    },
+                    body: `dbName=${datasetName}&dbType=tdb2`
+                });
+
+                if (!response.ok && response.status !== 409) { // 409 means already exists
+                    const text = await response.text();
+                    throw new Error(`Failed to create dataset: ${response.status} - ${text}`);
+                }
+
+                res.json({ success: true, dataset: datasetName, type: 'fuseki' });
+                break;
+            }
+
+            case 'graphdb': {
+                const repoName = repository || 'test';
+                const endpoint = baseUrl || 'http://localhost:7200';
+
+                // GraphDB requires a JSON payload to create a repository
+                const repoConfig = {
+                    id: repoName,
+                    title: repoName,
+                    type: 'graphdb:FreeSailRepository',
+                    params: {
+                        'base-URL': { value: 'http://example.org', type: 'string' },
+                        'repository-type': { value: 'file-repository', type: 'string' },
+                        'ruleset': { value: 'rdfsplus-optimized', type: 'string' },
+                        'storage-folder': { value: '', type: 'string' },
+                        'enable-context-index': { value: 'false', type: 'boolean' },
+                        'enablePredicateList': { value: 'true', type: 'boolean' },
+                        'enable-fts-index': { value: 'false', type: 'boolean' },
+                        'fts-indexes': { value: '', type: 'string' },
+                        'fts-string-literals-only': { value: 'true', type: 'boolean' },
+                        'fts-default-analyzer': { value: 'standard', type: 'string' },
+                        'check-for-inconsistencies': { value: 'false', type: 'boolean' },
+                        'disable-sameAs': { value: 'true', type: 'boolean' },
+                        'query-timeout': { value: '0', type: 'number' },
+                        'query-limit-results': { value: '0', type: 'number' },
+                        'throw-QueryEvaluationException-on-timeout': { value: 'false', type: 'boolean' },
+                        'read-only': { value: 'false', type: 'boolean' }
+                    }
+                };
+
+                const response = await fetch(`${endpoint}/rest/repositories`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...authHeaders
+                    },
+                    body: JSON.stringify(repoConfig)
+                });
+
+                if (!response.ok && response.status !== 409) { // 409 means already exists
+                    const text = await response.text();
+                    // Try to parse GraphDB error message
+                    let errorMsg = `Failed to create repository: ${response.status}`;
+                    try {
+                        const errorData = JSON.parse(text);
+                        errorMsg = errorData.message || errorData.error || text || errorMsg;
+                    } catch (e) {
+                        errorMsg = text || errorMsg;
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                res.json({ success: true, repository: repoName, type: 'graphdb' });
+                break;
+            }
+
+            case 'stardog': {
+                const dbName = database || 'lindas';
+                const endpoint = baseUrl || 'http://localhost:5820';
+
+                // Stardog uses the stardog.js library
+                const conn = new stardog.Connection({
+                    username: username || 'admin',
+                    password: password || 'admin',
+                    endpoint: endpoint
+                });
+
+                try {
+                    // Check if database already exists
+                    const dbListResult = await stardog.db.list(conn);
+                    if (dbListResult.ok && dbListResult.body.databases && dbListResult.body.databases.includes(dbName)) {
+                        res.json({ success: true, database: dbName, type: 'stardog', message: 'Database already exists' });
+                        return;
+                    }
+
+                    // Create the database
+                    const createResult = await stardog.db.create(conn, dbName, {
+                        database: {
+                            name: dbName
+                        }
+                    });
+
+                    if (createResult.ok) {
+                        res.json({ success: true, database: dbName, type: 'stardog' });
+                    } else {
+                        throw new Error(`Failed to create database: ${createResult.statusText || createResult.status}`);
+                    }
+                } catch (err) {
+                    throw new Error(`Stardog error: ${err.message}`);
+                }
+                break;
+            }
+
+            default:
+                res.status(400).json({ error: `Unknown triplestore type: ${triplestoreType}` });
+        }
+    } catch (error) {
+        console.error('Create dataset error:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -1914,6 +2420,9 @@ app.post('/api/query/graphs', async (req, res) => {
 app.post('/api/query/cubes', async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
         // Support both endpoint/baseUrl and dataset/database/repository field names
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
@@ -2070,11 +2579,17 @@ setInterval(cleanupOldBackups, 60 * 60 * 1000);
 // Create backup before deletion
 app.post('/api/backup/create', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type, includeMetadata, includeOrphans } = req.body;
+
+        // Validate URI parameters to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+        validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
         const auth = { username, password };
+        const shouldIncludeMetadata = includeMetadata !== false; // Default to true
+        const shouldIncludeOrphans = includeOrphans !== false; // Default to true
 
         // Construct triplestore-specific query endpoint
         let sparqlEndpoint;
@@ -2084,66 +2599,104 @@ app.post('/api/backup/create', async (req, res) => {
             sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
         }
 
-        // CONSTRUCT query to get all triples for the cube
-        const query = `
-            PREFIX cube: <https://cube.link/>
-            PREFIX sh: <http://www.w3.org/ns/shacl#>
-            PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        // Build query based on includeMetadata flag
+        let query;
+        if (shouldIncludeMetadata) {
+            // Full query with metadata (cube properties, SHACL shapes, etc.)
+            query = `
+                PREFIX cube: <https://cube.link/>
+                PREFIX sh: <http://www.w3.org/ns/shacl#>
+                PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 
-            CONSTRUCT {
-                ?s ?p ?o .
-            }
-            WHERE {
-                GRAPH <${graphUri}> {
-                    {
-                        <${cubeUri}> ?p ?o .
-                        BIND(<${cubeUri}> AS ?s)
-                    }
-                    UNION
-                    {
-                        <${cubeUri}> ?p1 ?bn .
-                        FILTER(isBlank(?bn))
-                        ?bn ?p ?o .
-                        BIND(?bn AS ?s)
-                    }
-                    UNION
-                    {
-                        <${cubeUri}> cube:observationConstraint ?shape .
-                        ?shape ?p ?o .
-                        BIND(?shape AS ?s)
-                    }
-                    UNION
-                    {
-                        <${cubeUri}> cube:observationConstraint ?shape .
-                        ?shape sh:property ?propShape .
-                        ?propShape ?p ?o .
-                        BIND(?propShape AS ?s)
-                    }
-                    UNION
-                    {
-                        <${cubeUri}> cube:observationConstraint ?shape .
-                        ?shape sh:property ?propShape .
-                        ?propShape sh:in ?list .
-                        ?list rdf:rest*/rdf:first ?item .
-                        ?list ?p ?o .
-                        BIND(?list AS ?s)
-                    }
-                    UNION
-                    {
-                        <${cubeUri}> cube:observationSet ?obsSet .
-                        ?obsSet ?p ?o .
-                        BIND(?obsSet AS ?s)
-                    }
-                    UNION
-                    {
-                        <${cubeUri}> cube:observationSet ?obsSet .
-                        ?obsSet cube:observation ?obs .
-                        ?obs ?p ?o .
-                        BIND(?obs AS ?s)
+                CONSTRUCT {
+                    ?s ?p ?o .
+                }
+                WHERE {
+                    GRAPH <${graphUri}> {
+                        {
+                            # Cube direct properties (metadata)
+                            <${cubeUri}> ?p ?o .
+                            BIND(<${cubeUri}> AS ?s)
+                        }
+                        UNION
+                        {
+                            # Blank node properties attached to cube (metadata)
+                            <${cubeUri}> ?p1 ?bn .
+                            FILTER(isBlank(?bn))
+                            ?bn ?p ?o .
+                            BIND(?bn AS ?s)
+                        }
+                        UNION
+                        {
+                            # SHACL NodeShape (observationConstraint - metadata)
+                            <${cubeUri}> cube:observationConstraint ?shape .
+                            ?shape ?p ?o .
+                            BIND(?shape AS ?s)
+                        }
+                        UNION
+                        {
+                            # SHACL PropertyShapes (metadata)
+                            <${cubeUri}> cube:observationConstraint ?shape .
+                            ?shape sh:property ?propShape .
+                            ?propShape ?p ?o .
+                            BIND(?propShape AS ?s)
+                        }
+                        UNION
+                        {
+                            # RDF Lists in property shapes (sh:in values - metadata)
+                            <${cubeUri}> cube:observationConstraint ?shape .
+                            ?shape sh:property ?propShape .
+                            ?propShape sh:in ?list .
+                            ?list rdf:rest*/rdf:first ?item .
+                            ?list ?p ?o .
+                            BIND(?list AS ?s)
+                        }
+                        UNION
+                        {
+                            # Observation set (links cube to observations)
+                            <${cubeUri}> cube:observationSet ?obsSet .
+                            ?obsSet ?p ?o .
+                            BIND(?obsSet AS ?s)
+                        }
+                        UNION
+                        {
+                            # Observations (the actual data)
+                            <${cubeUri}> cube:observationSet ?obsSet .
+                            ?obsSet cube:observation ?obs .
+                            ?obs ?p ?o .
+                            BIND(?obs AS ?s)
+                        }
                     }
                 }
-            }
-        `;
+            `;
+        } else {
+            // Observations-only query (no metadata)
+            query = `
+                PREFIX cube: <https://cube.link/>
+
+                CONSTRUCT {
+                    ?s ?p ?o .
+                }
+                WHERE {
+                    GRAPH <${graphUri}> {
+                        {
+                            # Observation set only (needed to link observations back to cube)
+                            <${cubeUri}> cube:observationSet ?obsSet .
+                            ?obsSet ?p ?o .
+                            BIND(?obsSet AS ?s)
+                        }
+                        UNION
+                        {
+                            # Observations only (the actual data)
+                            <${cubeUri}> cube:observationSet ?obsSet .
+                            ?obsSet cube:observation ?obs .
+                            ?obs ?p ?o .
+                            BIND(?obs AS ?s)
+                        }
+                    }
+                }
+            `;
+        }
 
         const headers = {
             'Accept': 'application/n-triples',
@@ -2165,6 +2718,43 @@ app.post('/api/backup/create', async (req, res) => {
         const triples = await response.text();
         const tripleCount = triples.split('\n').filter(line => line.trim()).length;
 
+        // Fetch orphan triples if requested
+        let orphanTriples = '';
+        let orphanStats = { totalCount: 0, types: {} };
+        if (shouldIncludeOrphans) {
+            try {
+                // Get orphan summary first
+                const summaryQuery = findOrphansSummaryQuery(graphUri);
+                const summaryResult = await executeSparqlSelect(sparqlEndpoint, summaryQuery, auth);
+                const bindings = summaryResult.results?.bindings || [];
+                
+                bindings.forEach(binding => {
+                    const type = binding.orphanType?.value;
+                    const count = parseInt(binding.count?.value) || 0;
+                    if (type) {
+                        orphanStats.types[type] = count;
+                        orphanStats.totalCount += count;
+                    }
+                });
+
+                // Get orphan triples if any exist
+                if (orphanStats.totalCount > 0) {
+                    const orphanObsQuery = constructOrphanObservationSetsQuery(graphUri);
+                    const orphanShapesQuery = constructOrphanShapesQuery(graphUri);
+                    
+                    const [obsResult, shapesResult] = await Promise.all([
+                        executeSparqlConstruct(sparqlEndpoint, orphanObsQuery, auth),
+                        executeSparqlConstruct(sparqlEndpoint, orphanShapesQuery, auth)
+                    ]);
+                    
+                    orphanTriples = [obsResult, shapesResult].filter(t => t.trim()).join('\n');
+                }
+            } catch (orphanError) {
+                console.warn('Failed to fetch orphan triples:', orphanError.message);
+                // Continue without orphans
+            }
+        }
+
         // Generate backup metadata
         const metadata = {
             cubeUri: cubeUri,
@@ -2177,13 +2767,22 @@ app.post('/api/backup/create', async (req, res) => {
             expiresAt: new Date(Date.now() + BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
         };
 
-        // Create self-contained ZIP backup (manifest inside ZIP)
-        const zipInfo = await createZipBackup(triples, metadata);
+        // Create self-contained ZIP backup (manifest inside ZIP) with orphan options
+        const zipOptions = {
+            includeMetadata: shouldIncludeMetadata,
+            includeOrphans: shouldIncludeOrphans && orphanTriples.length > 0,
+            orphanTriples: orphanTriples,
+            orphanStats: orphanStats
+        };
+        const zipInfo = await createZipBackup(triples, metadata, zipOptions);
 
         res.json({
             success: true,
             backupId: zipInfo.backupId,
             tripleCount: tripleCount,
+            orphanCount: orphanStats.totalCount,
+            includesMetadata: shouldIncludeMetadata,
+            includesOrphans: shouldIncludeOrphans && orphanTriples.length > 0,
             expiresAt: metadata.expiresAt,
             zipFilename: zipInfo.zipFilename,
             zipFileSize: zipInfo.compressedSize
@@ -2197,7 +2796,16 @@ app.post('/api/backup/create', async (req, res) => {
 // Used before batch deletion to create a single restorable backup
 app.post('/api/backup/create-multi', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUris, username, password, type } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUris, username, password, type, includeMetadata, includeOrphans } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+        // Validate all cube URIs
+        if (cubeUris && Array.isArray(cubeUris)) {
+            cubeUris.forEach((uri, index) => validateUriParam(uri, `cubeUris[${index}]`));
+        }
+        const shouldIncludeMetadata = includeMetadata !== false; // Default to true
+        const shouldIncludeOrphans = includeOrphans !== false; // Default to true
         const base = endpoint || baseUrl;
         const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
@@ -2226,65 +2834,104 @@ app.post('/api/backup/create-multi', async (req, res) => {
         let totalTripleCount = 0;
 
         for (const cubeUri of cubeUris) {
-            const query = `
-                PREFIX cube: <https://cube.link/>
-                PREFIX sh: <http://www.w3.org/ns/shacl#>
-                PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+            // Build query based on includeMetadata flag
+            let query;
+            if (shouldIncludeMetadata) {
+                // Full query with metadata (cube properties, SHACL shapes, etc.)
+                query = `
+                    PREFIX cube: <https://cube.link/>
+                    PREFIX sh: <http://www.w3.org/ns/shacl#>
+                    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 
-                CONSTRUCT {
-                    ?s ?p ?o .
-                }
-                WHERE {
-                    GRAPH <${graphUri}> {
-                        {
-                            <${cubeUri}> ?p ?o .
-                            BIND(<${cubeUri}> AS ?s)
-                        }
-                        UNION
-                        {
-                            <${cubeUri}> ?p1 ?bn .
-                            FILTER(isBlank(?bn))
-                            ?bn ?p ?o .
-                            BIND(?bn AS ?s)
-                        }
-                        UNION
-                        {
-                            <${cubeUri}> cube:observationConstraint ?shape .
-                            ?shape ?p ?o .
-                            BIND(?shape AS ?s)
-                        }
-                        UNION
-                        {
-                            <${cubeUri}> cube:observationConstraint ?shape .
-                            ?shape sh:property ?propShape .
-                            ?propShape ?p ?o .
-                            BIND(?propShape AS ?s)
-                        }
-                        UNION
-                        {
-                            <${cubeUri}> cube:observationConstraint ?shape .
-                            ?shape sh:property ?propShape .
-                            ?propShape sh:in ?list .
-                            ?list rdf:rest*/rdf:first ?item .
-                            ?list ?p ?o .
-                            BIND(?list AS ?s)
-                        }
-                        UNION
-                        {
-                            <${cubeUri}> cube:observationSet ?obsSet .
-                            ?obsSet ?p ?o .
-                            BIND(?obsSet AS ?s)
-                        }
-                        UNION
-                        {
-                            <${cubeUri}> cube:observationSet ?obsSet .
-                            ?obsSet cube:observation ?obs .
-                            ?obs ?p ?o .
-                            BIND(?obs AS ?s)
+                    CONSTRUCT {
+                        ?s ?p ?o .
+                    }
+                    WHERE {
+                        GRAPH <${graphUri}> {
+                            {
+                                # Cube direct properties (metadata)
+                                <${cubeUri}> ?p ?o .
+                                BIND(<${cubeUri}> AS ?s)
+                            }
+                            UNION
+                            {
+                                # Blank node properties attached to cube (metadata)
+                                <${cubeUri}> ?p1 ?bn .
+                                FILTER(isBlank(?bn))
+                                ?bn ?p ?o .
+                                BIND(?bn AS ?s)
+                            }
+                            UNION
+                            {
+                                # SHACL NodeShape (observationConstraint - metadata)
+                                <${cubeUri}> cube:observationConstraint ?shape .
+                                ?shape ?p ?o .
+                                BIND(?shape AS ?s)
+                            }
+                            UNION
+                            {
+                                # SHACL PropertyShapes (metadata)
+                                <${cubeUri}> cube:observationConstraint ?shape .
+                                ?shape sh:property ?propShape .
+                                ?propShape ?p ?o .
+                                BIND(?propShape AS ?s)
+                            }
+                            UNION
+                            {
+                                # RDF Lists in property shapes (sh:in values - metadata)
+                                <${cubeUri}> cube:observationConstraint ?shape .
+                                ?shape sh:property ?propShape .
+                                ?propShape sh:in ?list .
+                                ?list rdf:rest*/rdf:first ?item .
+                                ?list ?p ?o .
+                                BIND(?list AS ?s)
+                            }
+                            UNION
+                            {
+                                # Observation set (links cube to observations)
+                                <${cubeUri}> cube:observationSet ?obsSet .
+                                ?obsSet ?p ?o .
+                                BIND(?obsSet AS ?s)
+                            }
+                            UNION
+                            {
+                                # Observations (the actual data)
+                                <${cubeUri}> cube:observationSet ?obsSet .
+                                ?obsSet cube:observation ?obs .
+                                ?obs ?p ?o .
+                                BIND(?obs AS ?s)
+                            }
                         }
                     }
-                }
-            `;
+                `;
+            } else {
+                // Observations-only query (no metadata)
+                query = `
+                    PREFIX cube: <https://cube.link/>
+
+                    CONSTRUCT {
+                        ?s ?p ?o .
+                    }
+                    WHERE {
+                        GRAPH <${graphUri}> {
+                            {
+                                # Observation set only (needed to link observations back to cube)
+                                <${cubeUri}> cube:observationSet ?obsSet .
+                                ?obsSet ?p ?o .
+                                BIND(?obsSet AS ?s)
+                            }
+                            UNION
+                            {
+                                # Observations only (the actual data)
+                                <${cubeUri}> cube:observationSet ?obsSet .
+                                ?obsSet cube:observation ?obs .
+                                ?obs ?p ?o .
+                                BIND(?obs AS ?s)
+                            }
+                        }
+                    }
+                `;
+            }
 
             const response = await fetch(sparqlEndpoint, {
                 method: 'POST',
@@ -2313,6 +2960,43 @@ app.post('/api/backup/create-multi', async (req, res) => {
             return res.status(500).json({ error: 'Failed to backup any cubes' });
         }
 
+        // Fetch orphan triples if requested
+        let orphanTriples = '';
+        let orphanStats = { totalCount: 0, types: {} };
+        if (shouldIncludeOrphans) {
+            try {
+                // Get orphan summary first
+                const summaryQuery = findOrphansSummaryQuery(graphUri);
+                const summaryResult = await executeSparqlSelect(sparqlEndpoint, summaryQuery, auth);
+                const bindings = summaryResult.results?.bindings || [];
+                
+                bindings.forEach(binding => {
+                    const type = binding.orphanType?.value;
+                    const count = parseInt(binding.count?.value) || 0;
+                    if (type) {
+                        orphanStats.types[type] = count;
+                        orphanStats.totalCount += count;
+                    }
+                });
+
+                // Get orphan triples if any exist
+                if (orphanStats.totalCount > 0) {
+                    const orphanObsQuery = constructOrphanObservationSetsQuery(graphUri);
+                    const orphanShapesQuery = constructOrphanShapesQuery(graphUri);
+                    
+                    const [obsResult, shapesResult] = await Promise.all([
+                        executeSparqlConstruct(sparqlEndpoint, orphanObsQuery, auth),
+                        executeSparqlConstruct(sparqlEndpoint, orphanShapesQuery, auth)
+                    ]);
+                    
+                    orphanTriples = [obsResult, shapesResult].filter(t => t.trim()).join('\n');
+                }
+            } catch (orphanError) {
+                console.warn('Failed to fetch orphan triples:', orphanError.message);
+                // Continue without orphans
+            }
+        }
+
         // Generate backup metadata
         const metadata = {
             graphUri: graphUri,
@@ -2325,18 +3009,29 @@ app.post('/api/backup/create-multi', async (req, res) => {
             deletionContext: {
                 reason: 'Pre-deletion backup of multiple cube versions',
                 cubeCount: cubesData.length,
-                deletedAt: new Date().toISOString()
+                deletedAt: new Date().toISOString(),
+                includeMetadata: shouldIncludeMetadata,
+                includeOrphans: shouldIncludeOrphans
             }
         };
 
-        // Create consolidated ZIP backup with all cubes
-        const zipInfo = await createZipBackup(cubesData, metadata);
+        // Create consolidated ZIP backup with all cubes and orphans
+        const zipOptions = {
+            includeMetadata: shouldIncludeMetadata,
+            includeOrphans: shouldIncludeOrphans && orphanTriples.length > 0,
+            orphanTriples: orphanTriples,
+            orphanStats: orphanStats
+        };
+        const zipInfo = await createZipBackup(cubesData, metadata, zipOptions);
 
         res.json({
             success: true,
             backupId: zipInfo.backupId,
             cubeCount: cubesData.length,
             totalTripleCount: totalTripleCount,
+            orphanCount: orphanStats.totalCount,
+            includesMetadata: shouldIncludeMetadata,
+            includesOrphans: shouldIncludeOrphans && orphanTriples.length > 0,
             expiresAt: metadata.expiresAt,
             zipFilename: zipInfo.zipFilename,
             zipFileSize: zipInfo.compressedSize,
@@ -2348,10 +3043,98 @@ app.post('/api/backup/create-multi', async (req, res) => {
     }
 });
 
+// Orphan detection endpoint
+app.post('/api/orphans/detect', async (req, res) => {
+    try {
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+        const base = endpoint || baseUrl;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+        const auth = { username, password };
+
+        // Construct triplestore-specific query endpoint
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
+
+        const query = findOrphansSummaryQuery(graphUri);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
+        
+        const bindings = result.results?.bindings || [];
+        const summary = {};
+        let totalCount = 0;
+        
+        bindings.forEach(binding => {
+            const type = binding.orphanType?.value;
+            const count = parseInt(binding.count?.value) || 0;
+            if (type) {
+                summary[type] = count;
+                totalCount += count;
+            }
+        });
+
+        res.json({
+            success: true,
+            totalCount: totalCount,
+            summary: summary,
+            graphUri: graphUri
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Orphan cleanup endpoint
+app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
+    try {
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        // Validate URI parameter to prevent SPARQL injection
+        validateUriParam(graphUri, 'graphUri');
+        const base = endpoint || baseUrl;
+        const db = dataset || database || repository;
+        const triplestoreType = type || 'fuseki';
+        const auth = { username, password };
+
+        // Construct triplestore-specific update endpoint
+        let updateEndpoint;
+        if (triplestoreType === 'graphdb') {
+            updateEndpoint = db ? `${base}/repositories/${db}/statements` : `${base}/statements`;
+        } else {
+            updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
+        }
+
+        // Delete orphan observation sets first
+        const obsQuery = deleteOrphanObservationSetsQuery(graphUri);
+        await executeSparqlUpdate(updateEndpoint, obsQuery, auth);
+
+        // Delete orphan shapes
+        const shapesQuery = deleteOrphanShapesQuery(graphUri);
+        await executeSparqlUpdate(updateEndpoint, shapesQuery, auth);
+
+        res.json({
+            success: true,
+            message: 'Orphan triples cleaned up successfully'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Download a backup ZIP file directly
 app.get('/api/backup/download/:backupId', (req, res) => {
     try {
         const { backupId } = req.params;
+
+        // Validate backup ID to prevent path traversal
+        validateBackupId(backupId);
+
         const files = fs.readdirSync(BACKUP_DIR);
         const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
 
@@ -2404,7 +3187,11 @@ app.get('/api/backup/list', (req, res) => {
                             formatVersion: manifest.formatVersion || '3.0',
                             // Multi-cube support
                             cubes: manifest.cubes || (manifest.cube ? [manifest.cube] : []),
-                            cubeCount: manifest.stats?.cubeCount || (manifest.cubes?.length) || 1
+                            cubeCount: manifest.stats?.cubeCount || (manifest.cubes?.length) || 1,
+                            // Metadata and orphan flags
+                            includesMetadata: manifest.stats?.includesMetadata ?? true,
+                            includesOrphans: manifest.stats?.includesOrphans || false,
+                            orphanTripleCount: manifest.stats?.orphanTripleCount || manifest.orphans?.tripleCount || 0
                         };
 
                         backups.push(backupInfo);
@@ -2428,6 +3215,9 @@ app.get('/api/backup/list', (req, res) => {
 app.get('/api/backup/:backupId', (req, res) => {
     try {
         const { backupId } = req.params;
+
+        // Validate backup ID to prevent path traversal
+        validateBackupId(backupId);
 
         // Find the ZIP file for this backup
         const files = fs.readdirSync(BACKUP_DIR);
@@ -2477,6 +3267,9 @@ app.get('/api/backup/:backupId', (req, res) => {
 app.post('/api/backup/restore', async (req, res) => {
     try {
         const { backupId, endpoint, baseUrl, dataset, database, repository, username, password, type } = req.body;
+
+        // Validate backup ID to prevent path traversal
+        validateBackupId(backupId);
 
         // Find the ZIP file for this backup
         const files = fs.readdirSync(BACKUP_DIR);
@@ -2567,6 +3360,9 @@ app.get('/api/backup/:backupId/export', async (req, res) => {
     try {
         const { backupId } = req.params;
 
+        // Validate backup ID to prevent path traversal
+        validateBackupId(backupId);
+
         // Find the ZIP file for this backup
         const files = fs.readdirSync(BACKUP_DIR);
         const zipFile = files.find(f => f.endsWith('.zip') && f.includes(backupId));
@@ -2610,6 +3406,13 @@ app.post('/api/backup/upload', upload.single('file'), async (req, res) => {
         // Clean up uploaded file
         fs.unlinkSync(req.file.path);
 
+        // Generate a single tempId for both the response and file storage
+        const tempId = Date.now().toString();
+
+        // Store in temp storage for import step (using same tempId)
+        const tempPath = path.join(EXPORT_DIR, `temp_${tempId}.json`);
+        fs.writeFileSync(tempPath, JSON.stringify(parsed));
+
         // Return parsed content and metadata for user to review before import
         res.json({
             success: true,
@@ -2621,12 +3424,8 @@ app.post('/api/backup/upload', upload.single('file'), async (req, res) => {
             tripleCount: parsed.triples.split('\n').filter(line => line.trim()).length,
             format: parsed.format,
             // Store triples temporarily for the actual import step
-            tempId: Date.now().toString()
+            tempId: tempId
         });
-
-        // Store in temp storage for import step
-        const tempPath = path.join(EXPORT_DIR, `temp_${Date.now()}.json`);
-        fs.writeFileSync(tempPath, JSON.stringify(parsed));
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -2678,6 +3477,15 @@ app.post('/api/backup/import', async (req, res) => {
             }
         }
 
+        // Include orphan triples if present (from ZIP backup with orphans)
+        let orphanTriples = '';
+        let orphanTripleCount = 0;
+        if (parsed.orphanTriples && parsed.orphanTriples.trim().length > 0) {
+            orphanTriples = parsed.orphanTriples;
+            triples += '\n' + orphanTriples;
+            orphanTripleCount = orphanTriples.split('\n').filter(line => line.trim()).length;
+        }
+
         if (!triples || triples.trim().length === 0) {
             return res.status(400).json({ error: 'No triples found in the uploaded file' });
         }
@@ -2722,7 +3530,8 @@ app.post('/api/backup/import', async (req, res) => {
             importedTriples: tripleCount,
             graphUri: targetGraph,
             metadata: parsed.metadata,
-            cubeCount: parsed.cubeCount || (parsed.cubes?.length) || 1
+            cubeCount: parsed.cubeCount || (parsed.cubes?.length) || 1,
+            orphanTriples: orphanTripleCount > 0 ? orphanTripleCount : undefined
         });
     } catch (error) {
         console.error('Import error:', error);
@@ -2738,8 +3547,12 @@ app.post('/api/backup/restore-to', async (req, res) => {
             backupId,
             type, mode, baseUrl, dataset, database, repository, username, password,
             graphUri,
-            selectedCubes // Optional: array of cube URIs to restore (if empty, restore all)
+            selectedCubes, // Optional: array of cube URIs to restore (if empty, restore all)
+            includeOrphans // Optional: restore orphan triples if present (default: true)
         } = req.body;
+
+        // Validate backup ID to prevent path traversal
+        validateBackupId(backupId);
 
         // Find the ZIP file for this backup
         const files = fs.readdirSync(BACKUP_DIR);
@@ -2758,6 +3571,10 @@ app.post('/api/backup/restore-to', async (req, res) => {
             return res.status(500).json({ error: 'Invalid backup: missing manifest' });
         }
         const manifest = JSON.parse(manifestEntry.getData().toString('utf8'));
+
+        // Check if backup includes orphans
+        const shouldRestoreOrphans = includeOrphans !== false; // Default to true
+        const hasOrphans = manifest.stats?.includesOrphans || manifest.orphans?.included || false;
 
         // Read triples (support both single and multi-cube formats)
         let triples = '';
@@ -2801,6 +3618,21 @@ app.post('/api/backup/restore-to', async (req, res) => {
             return res.status(400).json({ error: 'No cubes selected or no data found for selected cubes' });
         }
 
+        // Read and add orphan triples if present and requested
+        let orphanTriples = '';
+        let orphanTripleCount = 0;
+        if (shouldRestoreOrphans && hasOrphans) {
+            const orphanEntry = zip.getEntry('orphans.nt');
+            if (orphanEntry) {
+                orphanTriples = orphanEntry.getData().toString('utf8');
+                orphanTripleCount = orphanTriples.split('\n').filter(line => line.trim()).length;
+                if (orphanTriples.trim().length > 0) {
+                    triples += '\n' + orphanTriples;
+                    totalTripleCount += orphanTripleCount;
+                }
+            }
+        }
+
         // Use provided graph or original from manifest
         const targetGraph = graphUri || manifest.graph?.uri || manifest.restore?.targetGraph || '';
 
@@ -2815,7 +3647,10 @@ app.post('/api/backup/restore-to', async (req, res) => {
             graphUri: targetGraph,
             cubeCount: restoredCubes.length,
             totalCubesInBackup: manifest.cubes?.length || 1,
-            restoredCubes: restoredCubes
+            restoredCubes: restoredCubes,
+            restoredOrphans: shouldRestoreOrphans && hasOrphans ? {
+                tripleCount: orphanTripleCount
+            } : null
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -2826,6 +3661,9 @@ app.post('/api/backup/restore-to', async (req, res) => {
 app.delete('/api/backup/:backupId', requireDestructiveAccess, (req, res) => {
     try {
         const { backupId } = req.params;
+
+        // Validate backup ID to prevent path traversal
+        validateBackupId(backupId);
 
         // Find the ZIP file for this backup
         const files = fs.readdirSync(BACKUP_DIR);

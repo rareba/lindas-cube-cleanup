@@ -267,13 +267,20 @@ function initConnectionSection() {
     // Triplestore type selector
     const typeSelect = document.getElementById('triplestore-type');
     if (typeSelect) {
-        typeSelect.addEventListener('change', updateConnectionUI);
+        typeSelect.addEventListener('change', (e) => {
+            // Explicitly update state when dropdown changes
+            state.triplestoreType = e.target.value;
+            updateConnectionState();
+        });
     }
 
     // Connection mode selector
     const connectionMode = document.getElementById('connection-mode');
     if (connectionMode) {
-        connectionMode.addEventListener('change', updateConnectionUI);
+        connectionMode.addEventListener('change', (e) => {
+            state.connectionMode = e.target.value;
+            updateConnectionState();
+        });
     }
 
     // Endpoint URL input - track manual changes
@@ -336,7 +343,8 @@ function initConnectionSection() {
     });
 }
 
-function updateConnectionUI() {
+function updateConnectionState() {
+    // Central function to update connection UI based on current state
     const typeSelect = document.getElementById('triplestore-type');
     const connectionMode = document.getElementById('connection-mode');
     const endpointUrl = document.getElementById('endpoint-url');
@@ -344,11 +352,16 @@ function updateConnectionUI() {
 
     if (!typeSelect || !connectionMode) return;
 
-    const type = typeSelect.value;
-    const mode = connectionMode.value;
+    // Sync DOM elements with state
+    if (typeSelect.value !== state.triplestoreType) {
+        typeSelect.value = state.triplestoreType;
+    }
+    if (connectionMode.value !== state.connectionMode) {
+        connectionMode.value = state.connectionMode;
+    }
 
-    state.triplestoreType = type;
-    state.connectionMode = mode;
+    const type = state.triplestoreType;
+    const mode = state.connectionMode;
 
     // Update endpoint URL and hint
     // Only set default URL if the current URL is empty or is a known placeholder
@@ -410,13 +423,40 @@ function updateConnectionUI() {
 }
 
 function applyPreset(preset) {
+    // Update DOM elements directly without triggering events
     const typeSelect = document.getElementById('triplestore-type');
     const connectionMode = document.getElementById('connection-mode');
 
-    if (typeSelect) typeSelect.value = preset;
-    if (connectionMode) connectionMode.value = 'local';
+    if (typeSelect) {
+        typeSelect.value = preset;
+    }
+    if (connectionMode) {
+        connectionMode.value = 'local';
+    }
 
-    updateConnectionUI();
+    // Update state from DOM after setting values
+    state.triplestoreType = preset;
+    state.connectionMode = 'local';
+
+    // Then update UI based on state - this will update endpoint URL, hints, visibility
+    updateConnectionState();
+}
+
+function updateConnectionUI() {
+    // Backward-compatible wrapper that syncs state from DOM then updates UI
+    const typeSelect = document.getElementById('triplestore-type');
+    const connectionMode = document.getElementById('connection-mode');
+
+    // Sync state from DOM if elements exist
+    if (typeSelect) {
+        state.triplestoreType = typeSelect.value;
+    }
+    if (connectionMode) {
+        state.connectionMode = connectionMode.value;
+    }
+
+    // Update UI based on state
+    updateConnectionState();
 }
 
 async function testConnection() {
@@ -935,6 +975,29 @@ function initWizard() {
         executeBtn.addEventListener('click', wizardExecuteDeletion);
     }
 
+    // Metadata checkbox
+    const includeMetadataBackupCheckbox = document.getElementById('include-metadata-backup');
+    if (includeMetadataBackupCheckbox) {
+        includeMetadataBackupCheckbox.addEventListener('change', () => {
+            state.includeMetadataInBackup = includeMetadataBackupCheckbox.checked;
+        });
+    }
+
+    // Orphan checkboxes
+    const includeOrphansBackupCheckbox = document.getElementById('include-orphans-backup');
+    if (includeOrphansBackupCheckbox) {
+        includeOrphansBackupCheckbox.addEventListener('change', () => {
+            state.includeOrphansInBackup = includeOrphansBackupCheckbox.checked;
+        });
+    }
+
+    const cleanupOrphansCheckbox = document.getElementById('cleanup-orphans');
+    if (cleanupOrphansCheckbox) {
+        cleanupOrphansCheckbox.addEventListener('change', () => {
+            state.cleanupOrphansAfterDeletion = cleanupOrphansCheckbox.checked;
+        });
+    }
+
     // Step 5: Restart
     const restartBtn = document.getElementById('btn-wizard-restart');
     if (restartBtn) {
@@ -1010,6 +1073,17 @@ function resetWizard() {
     // Reset confirm checkbox
     const confirmCheckbox = document.getElementById('confirm-deletion');
     if (confirmCheckbox) confirmCheckbox.checked = false;
+
+    // Reset metadata checkbox to default (checked)
+    const includeMetadataBackupCheckbox = document.getElementById('include-metadata-backup');
+    if (includeMetadataBackupCheckbox) includeMetadataBackupCheckbox.checked = true;
+
+    // Reset orphan checkboxes to default (checked)
+    const includeOrphansBackupCheckbox = document.getElementById('include-orphans-backup');
+    if (includeOrphansBackupCheckbox) includeOrphansBackupCheckbox.checked = true;
+
+    const cleanupOrphansCheckbox = document.getElementById('cleanup-orphans');
+    if (cleanupOrphansCheckbox) cleanupOrphansCheckbox.checked = true;
 
     const executeBtn = document.getElementById('btn-execute-deletion');
     if (executeBtn) executeBtn.disabled = true;
@@ -1537,10 +1611,23 @@ async function wizardExecuteDeletion() {
 
     const config = getConnectionConfig();
 
+    // Get backup options from checkboxes
+    const includeMetadataInBackup = document.getElementById('include-metadata-backup')?.checked !== false;
+    const includeOrphansInBackup = document.getElementById('include-orphans-backup')?.checked !== false;
+    const cleanupOrphansAfter = document.getElementById('cleanup-orphans')?.checked !== false;
+
     // STEP 0: Create ONE consolidated backup of ALL selected cubes before deletion
     if (!isDryRun) {
         addLog('');
         addLog('Creating consolidated backup of all ' + total + ' cube versions...');
+        if (includeMetadataInBackup) {
+            addLog('  (Including metadata: cube properties, SHACL shapes)');
+        } else {
+            addLog('  (Metadata excluded: backing up observations only)');
+        }
+        if (includeOrphansInBackup) {
+            addLog('  (Including orphan triples in backup)');
+        }
         updateDeletionProgress('Creating backup...', 0, total);
 
         let consolidatedBackupId = null;
@@ -1552,7 +1639,9 @@ async function wizardExecuteDeletion() {
                 body: JSON.stringify({
                     ...config,
                     cubeUris: cubeUris,
-                    graphUri: state.wizardGraph
+                    graphUri: state.wizardGraph,
+                    includeMetadata: includeMetadataInBackup,
+                    includeOrphans: includeOrphansInBackup
                 })
             });
 
@@ -1563,6 +1652,9 @@ async function wizardExecuteDeletion() {
                 addLog('Consolidated backup created: ' + backupResult.backupId);
                 addLog('  - Cubes backed up: ' + backupResult.cubeCount);
                 addLog('  - Total triples: ' + backupResult.totalTripleCount);
+                if (backupResult.orphanCount > 0) {
+                    addLog('  - Orphan triples: ' + backupResult.orphanCount);
+                }
                 addLog('  - File size: ' + formatBytes(backupResult.zipFileSize));
 
                 // Store backup info for auto-download later
@@ -1583,6 +1675,14 @@ async function wizardExecuteDeletion() {
     } else {
         addLog('');
         addLog('[DRY RUN] Would create backup of ' + total + ' cube versions');
+        if (includeMetadataInBackup) {
+            addLog('[DRY RUN] (Would include metadata)');
+        } else {
+            addLog('[DRY RUN] (Would exclude metadata - observations only)');
+        }
+        if (includeOrphansInBackup) {
+            addLog('[DRY RUN] (Would include orphan triples)');
+        }
     }
 
     addLog('');
@@ -1702,6 +1802,31 @@ async function wizardExecuteDeletion() {
         addLog('Deleted: ' + deleted + ' cubes');
         addLog('Errors: ' + errors);
         addLog('Total triples removed: ' + totalTriples);
+
+        // Orphan cleanup after deletion
+        if (cleanupOrphansAfter) {
+            addLog('');
+            addLog('Cleaning up orphan triples...');
+            try {
+                const cleanupResponse = await fetch('/api/orphans/cleanup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...config,
+                        graphUri: state.wizardGraph
+                    })
+                });
+
+                if (cleanupResponse.ok) {
+                    addLog('Orphan cleanup completed successfully');
+                } else {
+                    const cleanupError = await cleanupResponse.json();
+                    addLog('WARNING: Orphan cleanup failed - ' + (cleanupError.error || 'Unknown error'));
+                }
+            } catch (cleanupError) {
+                addLog('WARNING: Orphan cleanup error - ' + cleanupError.message);
+            }
+        }
 
         // Auto-download the consolidated backup ZIP
         if (state.deletionResults.consolidatedBackupId) {
@@ -2418,13 +2543,20 @@ function selectBackup(backupId) {
         const fields = [
             { label: 'Graph', value: backup.graphUri },
             { label: 'Created', value: new Date(backup.createdAt).toLocaleString() },
-            { label: 'Size', value: formatBytes(size) }
+            { label: 'Size', value: formatBytes(size) },
+            { label: 'Triples', value: backup.tripleCount?.toLocaleString() || '0' },
+            { label: 'Metadata', value: backup.includesMetadata !== false ? 'Included' : 'Excluded' }
         ];
 
         // Show cube info (simple version for single cube)
         if (!hasMutipleCubes) {
             const cubeValue = backup.cubeUri || (backup.cubes && backup.cubes[0]?.uri) || '';
             fields.unshift({ label: 'Cube', value: cubeValue });
+        }
+
+        // Add orphan info if present
+        if (backup.includesOrphans && backup.orphanTripleCount > 0) {
+            fields.push({ label: 'Orphan Triples', value: backup.orphanTripleCount.toLocaleString() });
         }
 
         fields.forEach(field => {
@@ -2550,7 +2682,7 @@ async function restoreBackup() {
             body: JSON.stringify({
                 ...config,
                 backupId: state.selectedBackupId,
-                targetGraph: targetGraph,
+                graphUri: targetGraph,
                 selectedCubes: state.selectedCubesToRestore // Pass selected cubes for selective restore
             })
         });
@@ -2655,6 +2787,13 @@ async function handleBackupFileUpload(file) {
             if (result.metadata) {
                 fields.push({ label: 'Cube', value: result.metadata.cubeUri || 'Unknown' });
                 fields.push({ label: 'Graph', value: result.metadata.graphUri || 'Unknown' });
+                // Show orphan information if present
+                if (result.metadata.includesOrphans) {
+                    fields.push({
+                        label: 'Orphan Triples',
+                        value: (result.metadata.orphanTripleCount || 0) + ' (will be restored)'
+                    });
+                }
             }
             fields.push({ label: 'Triples', value: String(result.tripleCount || 0) });
 
@@ -2688,8 +2827,8 @@ async function importBackupFile() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 ...config,
-                uploadId: state.uploadedFileData.uploadId,
-                targetGraph: targetGraph
+                tempId: state.uploadedFileData.tempId,
+                overrideGraph: targetGraph
             })
         });
 
@@ -2699,7 +2838,16 @@ async function importBackupFile() {
             throw new Error(result.error || 'Import failed');
         }
 
-        alert('Backup imported successfully!');
+        let message = 'Backup imported successfully!\n\n';
+        message += 'Imported ' + result.importedTriples.toLocaleString() + ' triples';
+        if (result.cubeCount > 1) {
+            message += ' across ' + result.cubeCount + ' cubes';
+        }
+        if (result.orphanTriples) {
+            message += ' (including ' + result.orphanTriples + ' orphan triples)';
+        }
+        message += '.';
+        alert(message);
         cancelBackupImport();
 
     } catch (error) {
