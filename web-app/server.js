@@ -996,6 +996,7 @@ Orphan Triples: ${orphanTripleCount} triples included
 
 Graph: ${metadata.graphUri}
 Created: ${manifest.createdAt}
+Backup ID: ${backupId}
 Total Cubes: ${cubeInfos.length}
 Total Triples: ${totalTripleCount}
 ${metadataInfo}${includeOrphans ? `Orphan Triples: ${orphanTripleCount}\n` : ''}
@@ -1004,18 +1005,70 @@ ${cubeList}
 ${orphanInfo}
 Files in this archive:
 - manifest.json: Complete metadata and restore instructions
+- restore-instructions.json: Machine-readable restore configuration
 ${cubeInfos.map(c => `- ${c.dataFile}: RDF triples for ${c.name}`).join('\n')}${includeOrphans ? '\n- orphans.nt: Orphan observation sets, observations, and SHACL shapes' : ''}
 - README.txt: This file
 
 To restore this backup:
-1. Use the LINDAS Cube Manager "Import Backup" function
-2. Or manually POST each data file to your triplestore's data endpoint
+1. Use the LINDAS Cube Manager "Import Backup" function:
+   a. Open the LINDAS Cube Manager web app
+   b. Go to the Backups section
+   c. Click "Import Backup" and select this ZIP file
+   d. Configure the target triplestore connection
+   e. Select cubes to restore (or restore all)
+   f. Click "Restore"
+2. Or use the API:
+   POST /api/backup/restore-to with backupId and target connection details
+   (see restore-instructions.json for the full API payload)
+3. Or manually POST each data file to your triplestore's data endpoint:
+   - For Fuseki: POST to /{dataset}/data?graph=<graphUri>
+   - For Stardog: POST to /{database}?graph=<graphUri>
+   - For GraphDB: POST to /repositories/{repo}/statements?context=<graphUri>
 
 Source Triplestore: ${manifest.source.triplestoreType}
 Source Endpoint: ${manifest.source.endpoint}
 Source Dataset: ${manifest.source.dataset || manifest.source.database || manifest.source.repository}
 `;
             archive.append(readme, { name: 'README.txt' });
+
+            // Add restore-instructions.json for machine-readable restore configuration
+            const restoreInstructions = {
+                description: 'Instructions for restoring this backup using the LINDAS Cube Manager',
+                restoreMethod: 'web-app-import',
+                steps: [
+                    '1. Open the LINDAS Cube Manager web app',
+                    '2. Go to the Backups section',
+                    '3. Click "Import Backup" and select this ZIP file',
+                    '4. Configure the target triplestore connection',
+                    '5. Select cubes to restore (or restore all)',
+                    '6. Click "Restore"'
+                ],
+                targetConnection: {
+                    triplestoreType: manifest.source.triplestoreType,
+                    endpoint: manifest.source.endpoint,
+                    database: manifest.source.database || manifest.source.dataset || manifest.source.repository,
+                    graphUri: metadata.graphUri
+                },
+                cubes: cubeInfos.map(c => ({
+                    uri: c.uri,
+                    version: c.version,
+                    dataFile: c.dataFile,
+                    tripleCount: c.tripleCount
+                })),
+                dataFormat: 'application/n-triples',
+                apiEndpoint: {
+                    method: 'POST',
+                    path: '/api/backup/restore-to',
+                    body: {
+                        backupId: backupId,
+                        type: manifest.source.triplestoreType,
+                        baseUrl: manifest.source.endpoint,
+                        database: manifest.source.database || manifest.source.dataset || manifest.source.repository,
+                        graphUri: metadata.graphUri
+                    }
+                }
+            };
+            archive.append(JSON.stringify(restoreInstructions, null, 2), { name: 'restore-instructions.json' });
 
             archive.finalize();
 
@@ -1933,7 +1986,16 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
 // Delete observations - Query 07
 app.post('/api/cubes/delete-observations', requireDestructiveAccess, async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type, backupId } = req.body;
+
+        // Require a valid backup before allowing deletion
+        if (!backupId) {
+            return res.status(400).json({ error: 'backupId is required. A backup must be created before deletion.' });
+        }
+        const backupZipPath = path.join(BACKUP_DIR, `backup_${backupId}.zip`);
+        if (!fs.existsSync(backupZipPath)) {
+            return res.status(400).json({ error: 'No backup found with the provided backupId. Create a backup first.' });
+        }
         const safeGraphUri = validateUriParam(graphUri, 'graphUri');
         const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
@@ -1993,7 +2055,16 @@ app.post('/api/cubes/delete-observations', requireDestructiveAccess, async (req,
 // Delete observation links - Query 08
 app.post('/api/cubes/delete-observation-links', requireDestructiveAccess, async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type, backupId } = req.body;
+
+        // Require a valid backup before allowing deletion
+        if (!backupId) {
+            return res.status(400).json({ error: 'backupId is required. A backup must be created before deletion.' });
+        }
+        const backupZipPath = path.join(BACKUP_DIR, `backup_${backupId}.zip`);
+        if (!fs.existsSync(backupZipPath)) {
+            return res.status(400).json({ error: 'No backup found with the provided backupId. Create a backup first.' });
+        }
         const safeGraphUri = validateUriParam(graphUri, 'graphUri');
         const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
@@ -2051,7 +2122,16 @@ app.post('/api/cubes/delete-observation-links', requireDestructiveAccess, async 
 // Delete cube metadata - Query 09
 app.post('/api/cubes/delete-metadata', requireDestructiveAccess, async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, cubeUri, username, password, type, backupId } = req.body;
+
+        // Require a valid backup before allowing deletion
+        if (!backupId) {
+            return res.status(400).json({ error: 'backupId is required. A backup must be created before deletion.' });
+        }
+        const backupZipPath = path.join(BACKUP_DIR, `backup_${backupId}.zip`);
+        if (!fs.existsSync(backupZipPath)) {
+            return res.status(400).json({ error: 'No backup found with the provided backupId. Create a backup first.' });
+        }
         const safeGraphUri = validateUriParam(graphUri, 'graphUri');
         const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;

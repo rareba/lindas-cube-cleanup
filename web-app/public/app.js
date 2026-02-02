@@ -1723,10 +1723,15 @@ async function wizardExecuteDeletion() {
                     body: JSON.stringify({
                         ...config,
                         cubeUri: cube.cube,
-                        graphUri: state.wizardGraph
+                        graphUri: state.wizardGraph,
+                        backupId: state.deletionResults.consolidatedBackupId
                     })
                 });
 
+                if (!obsResponse.ok) {
+                    const errBody = await obsResponse.json().catch(() => ({}));
+                    throw new Error(errBody.error || ('Delete observations failed with status ' + obsResponse.status));
+                }
                 const obsResult = await obsResponse.json();
                 totalTriples += obsResult.triplesDeleted || 0;
 
@@ -1738,10 +1743,15 @@ async function wizardExecuteDeletion() {
                     body: JSON.stringify({
                         ...config,
                         cubeUri: cube.cube,
-                        graphUri: state.wizardGraph
+                        graphUri: state.wizardGraph,
+                        backupId: state.deletionResults.consolidatedBackupId
                     })
                 });
 
+                if (!linksResponse.ok) {
+                    const errBody = await linksResponse.json().catch(() => ({}));
+                    throw new Error(errBody.error || ('Delete observation links failed with status ' + linksResponse.status));
+                }
                 const linksResult = await linksResponse.json();
                 totalTriples += linksResult.triplesDeleted || 0;
 
@@ -1753,10 +1763,15 @@ async function wizardExecuteDeletion() {
                     body: JSON.stringify({
                         ...config,
                         cubeUri: cube.cube,
-                        graphUri: state.wizardGraph
+                        graphUri: state.wizardGraph,
+                        backupId: state.deletionResults.consolidatedBackupId
                     })
                 });
 
+                if (!metaResponse.ok) {
+                    const errBody = await metaResponse.json().catch(() => ({}));
+                    throw new Error(errBody.error || ('Delete metadata failed with status ' + metaResponse.status));
+                }
                 const metaResult = await metaResponse.json();
                 totalTriples += metaResult.triplesDeleted || 0;
 
