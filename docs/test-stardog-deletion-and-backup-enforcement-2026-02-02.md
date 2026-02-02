@@ -9,9 +9,9 @@ The frontend (`app.js`) did not check `response.ok` on the three delete API call
 
 ## Changes Made
 
-### 1. Frontend: response.ok checks on delete calls (`web-app/public/app.js`)
+### 1. Frontend: response.ok checks on backup and delete calls (`web-app/public/app.js`)
 
-For each of the 3 delete fetch calls:
+For the backup call and each of the 3 delete fetch calls:
 - Added `if (!response.ok)` check immediately after `await fetch()`
 - On failure, parses the error body and throws an `Error` with the server's error message
 - This ensures HTTP 403, 400, 500, etc. are all surfaced clearly in the wizard log

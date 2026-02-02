@@ -1645,6 +1645,10 @@ async function wizardExecuteDeletion() {
                 })
             });
 
+            if (!backupResponse.ok) {
+                const errBody = await backupResponse.json().catch(() => ({}));
+                throw new Error(errBody.error || ('Backup request failed with status ' + backupResponse.status));
+            }
             const backupResult = await backupResponse.json();
             if (backupResult.success && backupResult.backupId) {
                 consolidatedBackupId = backupResult.backupId;
