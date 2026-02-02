@@ -63,6 +63,24 @@ function validateUriParam(uri, paramName) {
 }
 
 /**
+ * Resolve the correct dataset/database/repository name based on triplestore type.
+ * Each triplestore uses a different field name: Fuseki uses 'dataset', Stardog uses 'database',
+ * GraphDB uses 'repository'. The frontend sends all three fields regardless of which triplestore
+ * is selected, so we must pick the right one based on the type to avoid using stale defaults.
+ */
+function resolveDbName({ type, dataset, database, repository }) {
+    switch (type) {
+        case 'graphdb':
+            return repository || database || dataset;
+        case 'stardog':
+            return database || dataset || repository;
+        case 'fuseki':
+        default:
+            return dataset || database || repository;
+    }
+}
+
+/**
  * Validate a backup ID parameter to prevent path traversal attacks.
  * Only allows alphanumeric characters, hyphens, and underscores.
  * Throws an error if the backup ID contains invalid characters.
@@ -1628,8 +1646,8 @@ app.post('/api/cubes/list-versions', async (req, res) => {
         validateUriParam(graphUri, 'graphUri');
         // Support both endpoint and baseUrl, and dataset/database/repository for different triplestores
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoint
         let sparqlEndpoint;
@@ -1694,8 +1712,8 @@ app.post('/api/cubes/count-versions', async (req, res) => {
         // Validate URI parameter to prevent SPARQL injection
         validateUriParam(graphUri, 'graphUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoint
         let sparqlEndpoint;
@@ -1745,8 +1763,8 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
         // Validate URI parameter to prevent SPARQL injection
         validateUriParam(graphUri, 'graphUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoint
         let sparqlEndpoint;
@@ -1841,8 +1859,8 @@ app.post('/api/cubes/preview-deletion', async (req, res) => {
         validateUriParam(graphUri, 'graphUri');
         validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoint
         let sparqlEndpoint;
@@ -1919,8 +1937,8 @@ app.post('/api/cubes/delete-observations', requireDestructiveAccess, async (req,
         const safeGraphUri = validateUriParam(graphUri, 'graphUri');
         const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoints
         let queryEndpoint, updateEndpoint;
@@ -1979,8 +1997,8 @@ app.post('/api/cubes/delete-observation-links', requireDestructiveAccess, async 
         const safeGraphUri = validateUriParam(graphUri, 'graphUri');
         const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoints
         let queryEndpoint, updateEndpoint;
@@ -2037,8 +2055,8 @@ app.post('/api/cubes/delete-metadata', requireDestructiveAccess, async (req, res
         const safeGraphUri = validateUriParam(graphUri, 'graphUri');
         const safeCubeUri = validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoints
         let queryEndpoint, updateEndpoint;
@@ -2384,8 +2402,8 @@ app.post('/api/query/graphs', async (req, res) => {
         const { endpoint, baseUrl, dataset, database, repository, username, password, type } = req.body;
         // Support both endpoint/baseUrl and dataset/database/repository field names
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoint
         let sparqlEndpoint;
@@ -2425,8 +2443,8 @@ app.post('/api/query/cubes', async (req, res) => {
         validateUriParam(graphUri, 'graphUri');
         // Support both endpoint/baseUrl and dataset/database/repository field names
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
 
         // Construct triplestore-specific endpoint
         let sparqlEndpoint;
@@ -2474,9 +2492,9 @@ app.post('/api/query/execute', async (req, res) => {
         const { endpoint, baseUrl, dataset, database, repository, query, queryType, username, password, triplestoreType } = req.body;
         // Support all field naming conventions: dataset (Fuseki), database (Stardog), repository (GraphDB)
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
-        const auth = { username, password };
         const type = triplestoreType || 'fuseki';
+        const db = resolveDbName({ type, dataset, database, repository });
+        const auth = { username, password };
 
         if (!query || !query.trim()) {
             return res.status(400).json({ error: 'Query is required' });
@@ -2585,8 +2603,8 @@ app.post('/api/backup/create', async (req, res) => {
         validateUriParam(graphUri, 'graphUri');
         validateUriParam(cubeUri, 'cubeUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
         const auth = { username, password };
         const shouldIncludeMetadata = includeMetadata !== false; // Default to true
         const shouldIncludeOrphans = includeOrphans !== false; // Default to true
@@ -2807,8 +2825,8 @@ app.post('/api/backup/create-multi', async (req, res) => {
         const shouldIncludeMetadata = includeMetadata !== false; // Default to true
         const shouldIncludeOrphans = includeOrphans !== false; // Default to true
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
         const auth = { username, password };
 
         if (!cubeUris || !Array.isArray(cubeUris) || cubeUris.length === 0) {
@@ -3051,8 +3069,8 @@ app.post('/api/orphans/detect', async (req, res) => {
         // Validate URI parameter to prevent SPARQL injection
         validateUriParam(graphUri, 'graphUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
         const auth = { username, password };
 
         // Construct triplestore-specific query endpoint
@@ -3098,8 +3116,8 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
         // Validate URI parameter to prevent SPARQL injection
         validateUriParam(graphUri, 'graphUri');
         const base = endpoint || baseUrl;
-        const db = dataset || database || repository;
         const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
         const auth = { username, password };
 
         // Construct triplestore-specific update endpoint
@@ -3314,8 +3332,8 @@ app.post('/api/backup/restore', async (req, res) => {
 
         // Use provided values or fall back to manifest
         const base = endpoint || baseUrl || manifest.source?.endpoint || '';
-        const db = dataset || database || repository || manifest.source?.dataset || '';
         const triplestoreType = type || manifest.source?.triplestoreType || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository }) || manifest.source?.dataset || '';
         const graphUri = manifest.graph?.uri || manifest.restore?.targetGraph || '';
         const auth = { username, password };
 
