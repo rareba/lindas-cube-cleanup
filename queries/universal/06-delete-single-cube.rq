@@ -3,58 +3,104 @@
 #   - Replace GRAPH_URI with the target graph
 #   - Replace CUBE_URI with the cube to delete
 # WARNING: This is a destructive operation!
+#
+# Uses BIND pattern instead of FILTER for Stardog compatibility.
+# Uses bidirectional matching to catch all references.
+# See: docs/sparql-query-review-2026-02-02.md
 
 PREFIX cube: <https://cube.link/>
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 
-WITH <GRAPH_URI>
 DELETE {
-  ?cube a cube:Cube ;
-        cube:observationConstraint ?shape ;
-        cube:observationSet ?set ;
-        ?p1 ?metaLevel1 .
-
-  ?metaLevel1 ?p2 ?metaLevel2 .
-
-  ?shape ?shapeP ?shapeO .
-  ?propertyS ?propertyP ?propertyO .
-
-  ?set cube:observation ?observationS .
-  ?set ?setP ?setO .
-  ?observationS ?observationP ?observationO .
+  GRAPH <GRAPH_URI> {
+    ?s ?p ?o .
+  }
 }
 WHERE {
-  BIND(<CUBE_URI> AS ?cube)
-  ?cube rdf:type cube:Cube
+  GRAPH <GRAPH_URI> {
+    VALUES ?targetCube { <CUBE_URI> }
 
-  {
-    ?cube ?p1 ?metaLevel1
-    OPTIONAL {
-      ?metaLevel1 ?p2 ?metaLevel2
-      FILTER(isBlank(?metaLevel1))
+    {
+      # Cube outgoing triples (metadata, type, links)
+      ?targetCube ?p ?o .
+      BIND(?targetCube AS ?s)
     }
-  }
-  UNION
-  {
-    ?cube cube:observationConstraint ?shape .
-    ?shape ?shapeP ?shapeO
-  }
-  UNION
-  {
-    ?cube cube:observationConstraint/sh:property ?property .
-    ?property (<>|!<>)* ?propertyS .
-    ?propertyS ?propertyP ?propertyO
-  }
-  UNION
-  {
-    ?cube cube:observationSet ?set .
-    ?set ?setP ?setO .
-  }
-  UNION
-  {
-    ?cube cube:observationSet ?set .
-    ?set cube:observation ?observationS .
-    ?observationS ?observationP ?observationO
+    UNION
+    {
+      # Cube incoming triples (anything pointing TO this cube)
+      ?s ?p ?targetCube .
+      BIND(?targetCube AS ?o)
+    }
+    UNION
+    {
+      # Blank node properties attached to the cube
+      ?targetCube ?p1 ?bn .
+      FILTER(isBlank(?bn))
+      ?bn ?p ?o .
+      BIND(?bn AS ?s)
+    }
+    UNION
+    {
+      # SHACL NodeShape (observationConstraint) - outgoing
+      ?targetCube cube:observationConstraint ?shape .
+      ?shape ?p ?o .
+      BIND(?shape AS ?s)
+    }
+    UNION
+    {
+      # SHACL NodeShape - incoming
+      ?targetCube cube:observationConstraint ?shape .
+      ?s ?p ?shape .
+      BIND(?shape AS ?o)
+    }
+    UNION
+    {
+      # SHACL PropertyShape
+      ?targetCube cube:observationConstraint ?shape .
+      ?shape sh:property ?propShape .
+      ?propShape ?p ?o .
+      BIND(?propShape AS ?s)
+    }
+    UNION
+    {
+      # RDF List nodes in PropertyShapes (sh:in lists)
+      ?targetCube cube:observationConstraint ?shape .
+      ?shape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?p ?o .
+      BIND(?list AS ?s)
+    }
+    UNION
+    {
+      # ObservationSet - outgoing
+      ?targetCube cube:observationSet ?obsSet .
+      ?obsSet ?p ?o .
+      BIND(?obsSet AS ?s)
+    }
+    UNION
+    {
+      # ObservationSet - incoming
+      ?targetCube cube:observationSet ?obsSet .
+      ?s ?p ?obsSet .
+      BIND(?obsSet AS ?o)
+    }
+    UNION
+    {
+      # Observations - outgoing
+      ?targetCube cube:observationSet ?obsSet .
+      ?obsSet cube:observation ?obs .
+      ?obs ?p ?o .
+      BIND(?obs AS ?s)
+    }
+    UNION
+    {
+      # Observations - incoming
+      ?targetCube cube:observationSet ?obsSet .
+      ?obsSet cube:observation ?obs .
+      ?s ?p ?obs .
+      BIND(?obs AS ?o)
+    }
   }
 }
