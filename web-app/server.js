@@ -3200,6 +3200,14 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
         const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
         const auth = { username, password };
 
+        // Construct triplestore-specific query endpoint for counting
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
+
         // Construct triplestore-specific update endpoint
         let updateEndpoint;
         if (triplestoreType === 'graphdb') {
@@ -3207,6 +3215,21 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
         } else {
             updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         }
+
+        // Count orphans before deletion
+        const countQuery = findOrphansSummaryQuery(graphUri);
+        const beforeResult = await executeSparqlSelect(sparqlEndpoint, countQuery, auth);
+        const beforeBindings = beforeResult.results?.bindings || [];
+        const beforeSummary = {};
+        let beforeTotal = 0;
+        beforeBindings.forEach(binding => {
+            const orphanType = binding.orphanType?.value;
+            const count = parseInt(binding.count?.value) || 0;
+            if (orphanType) {
+                beforeSummary[orphanType] = count;
+                beforeTotal += count;
+            }
+        });
 
         // Delete orphan observation sets first
         const obsQuery = deleteOrphanObservationSetsQuery(graphUri);
@@ -3216,9 +3239,32 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
         const shapesQuery = deleteOrphanShapesQuery(graphUri);
         await executeSparqlUpdate(updateEndpoint, shapesQuery, auth);
 
+        // Count orphans after deletion to calculate removed counts
+        const afterResult = await executeSparqlSelect(sparqlEndpoint, countQuery, auth);
+        const afterBindings = afterResult.results?.bindings || [];
+        const afterSummary = {};
+        let afterTotal = 0;
+        afterBindings.forEach(binding => {
+            const orphanType = binding.orphanType?.value;
+            const count = parseInt(binding.count?.value) || 0;
+            if (orphanType) {
+                afterSummary[orphanType] = count;
+                afterTotal += count;
+            }
+        });
+
+        // Calculate removed counts per type
+        const removed = {};
+        for (const orphanType of Object.keys(beforeSummary)) {
+            removed[orphanType] = (beforeSummary[orphanType] || 0) - (afterSummary[orphanType] || 0);
+        }
+        const totalRemoved = beforeTotal - afterTotal;
+
         res.json({
             success: true,
-            message: 'Orphan triples cleaned up successfully'
+            message: 'Orphan triples cleaned up successfully',
+            removed: removed,
+            totalRemoved: totalRemoved
         });
     } catch (error) {
         res.status(500).json({ error: error.message });

@@ -1822,12 +1822,12 @@ async function wizardExecuteDeletion() {
         addLog('Errors: ' + errors);
         addLog('Total triples removed: ' + totalTriples);
 
-        // Orphan cleanup after deletion
+        // Orphan detection and optional cleanup after deletion
         if (cleanupOrphansAfter) {
             addLog('');
-            addLog('Cleaning up orphan triples...');
+            addLog('Detecting orphan triples...');
             try {
-                const cleanupResponse = await fetch('/api/orphans/cleanup', {
+                const detectResponse = await fetch('/api/orphans/detect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1836,14 +1836,72 @@ async function wizardExecuteDeletion() {
                     })
                 });
 
-                if (cleanupResponse.ok) {
-                    addLog('Orphan cleanup completed successfully');
+                if (detectResponse.ok) {
+                    const detectData = await detectResponse.json();
+                    const summary = detectData.summary || {};
+                    const totalCount = detectData.totalCount || 0;
+
+                    if (totalCount > 0) {
+                        // Show orphan counts in the log
+                        addLog('Found orphan triples:');
+                        if (summary.ObservationSet) addLog('  - Orphan observation sets: ' + summary.ObservationSet);
+                        if (summary.NodeShape) addLog('  - Orphan node shapes: ' + summary.NodeShape);
+                        if (summary.PropertyShape) addLog('  - Orphan property shapes: ' + summary.PropertyShape);
+                        addLog('  Total: ' + totalCount + ' orphan triples');
+                        addLog('');
+                        addLog('Use the buttons below to clean up orphans or skip.');
+
+                        // Show the orphan cleanup buttons
+                        const orphanActions = document.getElementById('orphan-cleanup-actions');
+                        if (orphanActions) {
+                            orphanActions.classList.remove('hidden');
+                        }
+
+                        // Wait for user decision via buttons
+                        const userChoice = await waitForOrphanCleanupDecision();
+
+                        // Hide the buttons after decision
+                        if (orphanActions) {
+                            orphanActions.classList.add('hidden');
+                        }
+
+                        if (userChoice === 'cleanup') {
+                            addLog('');
+                            addLog('Cleaning up orphan triples...');
+                            const cleanupResponse = await fetch('/api/orphans/cleanup', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    ...config,
+                                    graphUri: state.wizardGraph
+                                })
+                            });
+
+                            if (cleanupResponse.ok) {
+                                const cleanupData = await cleanupResponse.json();
+                                const removed = cleanupData.removed || {};
+                                const totalRemoved = cleanupData.totalRemoved || 0;
+                                addLog('Orphan cleanup completed:');
+                                for (const [type, count] of Object.entries(removed)) {
+                                    if (count > 0) addLog('  - Removed ' + count + ' ' + type);
+                                }
+                                addLog('  Total removed: ' + totalRemoved + ' orphan triples');
+                            } else {
+                                const cleanupError = await cleanupResponse.json();
+                                addLog('WARNING: Orphan cleanup failed - ' + (cleanupError.error || 'Unknown error'));
+                            }
+                        } else {
+                            addLog('Orphan cleanup skipped by user.');
+                        }
+                    } else {
+                        addLog('No orphan triples found - graph is clean.');
+                    }
                 } else {
-                    const cleanupError = await cleanupResponse.json();
-                    addLog('WARNING: Orphan cleanup failed - ' + (cleanupError.error || 'Unknown error'));
+                    const detectError = await detectResponse.json();
+                    addLog('WARNING: Orphan detection failed - ' + (detectError.error || 'Unknown error'));
                 }
             } catch (cleanupError) {
-                addLog('WARNING: Orphan cleanup error - ' + cleanupError.message);
+                addLog('WARNING: Orphan detection error - ' + cleanupError.message);
             }
         }
 
@@ -1873,6 +1931,28 @@ async function wizardExecuteDeletion() {
         goToWizardStep(5);
         renderWizardSummary(isDryRun);
     }, 1000);
+}
+
+function waitForOrphanCleanupDecision() {
+    return new Promise((resolve) => {
+        const cleanupBtn = document.getElementById('btn-cleanup-orphans');
+        const skipBtn = document.getElementById('btn-skip-orphan-cleanup');
+
+        function onCleanup() {
+            cleanupBtn.removeEventListener('click', onCleanup);
+            skipBtn.removeEventListener('click', onSkip);
+            resolve('cleanup');
+        }
+
+        function onSkip() {
+            cleanupBtn.removeEventListener('click', onCleanup);
+            skipBtn.removeEventListener('click', onSkip);
+            resolve('skip');
+        }
+
+        if (cleanupBtn) cleanupBtn.addEventListener('click', onCleanup);
+        if (skipBtn) skipBtn.addEventListener('click', onSkip);
+    });
 }
 
 function updateDeletionProgress(step, current, total) {
