@@ -117,8 +117,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initQueryEditor();
     initBackupsSection();
     initDocumentation();
-    initInstallation();
-
     // Load initial state
     updateModeUI();
     updateConnectionUI();
@@ -178,8 +176,7 @@ function navigateToSection(sectionId) {
         'wizard': 'Deletion Wizard',
         'query-editor': 'Query Editor',
         'backups': 'Backup Management',
-        'documentation': 'Documentation',
-        'installation': 'Installation Guide'
+        'documentation': 'Documentation'
     };
     const pageTitle = document.getElementById('page-title');
     if (pageTitle && titles[sectionId]) {
@@ -2963,28 +2960,6 @@ function initDocumentation() {
             const panels = document.querySelectorAll('.doc-panel');
             panels.forEach(panel => {
                 panel.classList.toggle('active', panel.id === 'doc-' + docId);
-            });
-        });
-    });
-}
-
-// ============================================================================
-// Installation Section
-// ============================================================================
-
-function initInstallation() {
-    const installTabBtns = document.querySelectorAll('.install-tab-btn');
-    installTabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const installId = btn.dataset.install;
-
-            // Update tab buttons
-            installTabBtns.forEach(b => b.classList.toggle('active', b === btn));
-
-            // Update panels
-            const panels = document.querySelectorAll('.install-panel');
-            panels.forEach(panel => {
-                panel.classList.toggle('active', panel.id === 'install-' + installId);
             });
         });
     });

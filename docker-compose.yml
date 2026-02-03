@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  web-app:
+    build: .
+    container_name: lindas-cube-cleanup
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - ENABLE_DESTRUCTIVE_API=false
+      # Uncomment to enable deletion endpoints:
+      # - ENABLE_DESTRUCTIVE_API=true
+      # Uncomment to require bearer token for destructive operations:
+      # - API_AUTH_TOKEN=your-secret-token
+    volumes:
+      - ./backups:/app/backups
+    restart: unless-stopped

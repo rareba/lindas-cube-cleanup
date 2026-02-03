@@ -206,10 +206,15 @@ const LINDAS_ENDPOINT = 'https://lindas.admin.ch/query';
 const DEFAULT_FUSEKI_ENDPOINT = 'http://localhost:3030';
 
 // Load universal queries from files
+// Checks both the standard path (web-app/../queries) and Docker path (__dirname/queries)
 function loadQuery(queryName) {
-    const queryPath = path.join(__dirname, '..', 'queries', 'universal', queryName);
-    if (fs.existsSync(queryPath)) {
-        return fs.readFileSync(queryPath, 'utf8');
+    const standardPath = path.join(__dirname, '..', 'queries', 'universal', queryName);
+    if (fs.existsSync(standardPath)) {
+        return fs.readFileSync(standardPath, 'utf8');
+    }
+    const dockerPath = path.join(__dirname, 'queries', 'universal', queryName);
+    if (fs.existsSync(dockerPath)) {
+        return fs.readFileSync(dockerPath, 'utf8');
     }
     return null;
 }

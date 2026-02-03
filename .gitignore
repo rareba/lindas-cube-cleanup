@@ -6,9 +6,6 @@ data/*.nt
 data/cubes/
 data/sfoe-cube*
 
-# Keep test results
-!data/test-results/
-
 # Fuseki installation
 fuseki/
 
@@ -16,9 +13,11 @@ fuseki/
 *.tmp
 *.log
 
-# Windows
+# Windows artifacts
 Thumbs.db
 Desktop.ini
+nul
+null
 
 # IDE
 .idea/
@@ -28,17 +27,17 @@ Desktop.ini
 # Claude Code temp files
 .claude/
 tmpclaude-*
-nul
 
-# Backups
+# Removed (deprecated components archive)
+Removed/
+
+# Backups and runtime data
 **/backups/
 **/backups_old/
+**/exports/
+**/uploads/
 
 # Config files with credentials
-cleanup-service/config/config.json
 *.credentials.json
 .env*
 credentials/
-
-# Package lock files (keep web-app one)
-cleanup-service/package-lock.json
