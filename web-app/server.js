@@ -665,22 +665,28 @@ function constructOrphanObservationSetsQuery(graphUri) {
     return `${ORPHAN_PREFIXES}
 CONSTRUCT { ?s ?p ?o }
 WHERE {
-  GRAPH <${graphUri}> {
-    {
-      # Orphan observation sets
-      ?orphanSet cube:observation ?someObs .
-      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
-      ?orphanSet ?p ?o .
-      BIND(?orphanSet AS ?s)
-    }
-    UNION
-    {
-      # Observations in orphan sets
-      ?orphanSet cube:observation ?someObs .
-      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
-      ?orphanSet cube:observation ?obs .
-      ?obs ?p ?o .
-      BIND(?obs AS ?s)
+  {
+    SELECT ?s ?p ?o
+    WHERE {
+      GRAPH <${graphUri}> {
+        {
+          SELECT ?orphanSet
+          WHERE {
+            ?orphanSet cube:observation ?someObs .
+            FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+          }
+        }
+        {
+          ?orphanSet ?p ?o .
+          BIND(?orphanSet AS ?s)
+        }
+        UNION
+        {
+          ?orphanSet cube:observation ?obs .
+          ?obs ?p ?o .
+          BIND(?obs AS ?s)
+        }
+      }
     }
   }
 }`;
@@ -693,21 +699,27 @@ function constructOrphanShapesQuery(graphUri) {
     return `${ORPHAN_PREFIXES}
 CONSTRUCT { ?s ?p ?o }
 WHERE {
-  GRAPH <${graphUri}> {
-    {
-      # Orphan NodeShapes
-      ?orphanShape a sh:NodeShape .
-      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
-      ?orphanShape ?p ?o .
-      BIND(?orphanShape AS ?s)
-    }
-    UNION
-    {
-      # Orphan PropertyShapes
-      ?orphanShape a sh:PropertyShape .
-      FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
-      ?orphanShape ?p ?o .
-      BIND(?orphanShape AS ?s)
+  {
+    SELECT ?s ?p ?o
+    WHERE {
+      GRAPH <${graphUri}> {
+        {
+          SELECT ?orphanShape
+          WHERE {
+            {
+              ?orphanShape a sh:NodeShape .
+              FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+            }
+            UNION
+            {
+              ?orphanShape a sh:PropertyShape .
+              FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+            }
+          }
+        }
+        ?orphanShape ?p ?o .
+        BIND(?orphanShape AS ?s)
+      }
     }
   }
 }`;
@@ -720,26 +732,33 @@ function findOrphansSummaryQuery(graphUri) {
     return `${ORPHAN_PREFIXES}
 SELECT ?orphanType (COUNT(DISTINCT ?orphan) AS ?count)
 WHERE {
-  GRAPH <${graphUri}> {
-    {
-      # Orphan Observation Sets
-      ?orphan cube:observation ?someObs .
-      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
-      BIND("ObservationSet" AS ?orphanType)
+  {
+    SELECT ?orphan ("ObservationSet" AS ?orphanType)
+    WHERE {
+      GRAPH <${graphUri}> {
+        ?orphan cube:observation ?someObs .
+        FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphan }
+      }
     }
-    UNION
-    {
-      # Orphan NodeShapes
-      ?orphan a sh:NodeShape .
-      FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
-      BIND("NodeShape" AS ?orphanType)
+  }
+  UNION
+  {
+    SELECT ?orphan ("NodeShape" AS ?orphanType)
+    WHERE {
+      GRAPH <${graphUri}> {
+        ?orphan a sh:NodeShape .
+        FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphan }
+      }
     }
-    UNION
-    {
-      # Orphan PropertyShapes
-      ?orphan a sh:PropertyShape .
-      FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
-      BIND("PropertyShape" AS ?orphanType)
+  }
+  UNION
+  {
+    SELECT ?orphan ("PropertyShape" AS ?orphanType)
+    WHERE {
+      GRAPH <${graphUri}> {
+        ?orphan a sh:PropertyShape .
+        FILTER NOT EXISTS { ?anyShape sh:property ?orphan }
+      }
     }
   }
 }
@@ -758,8 +777,13 @@ DELETE {
   ?obs ?obsP ?obsO .
 }
 WHERE {
-  ?orphanSet cube:observation ?someObs .
-  FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+  {
+    SELECT ?orphanSet
+    WHERE {
+      ?orphanSet cube:observation ?someObs .
+      FILTER NOT EXISTS { ?anyCube cube:observationSet ?orphanSet }
+    }
+  }
   ?orphanSet ?setP ?setO .
   OPTIONAL {
     ?orphanSet cube:observation ?obs .
@@ -779,16 +803,20 @@ DELETE {
 }
 WHERE {
   {
-    ?orphanShape a sh:NodeShape .
-    FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
-    ?orphanShape ?p ?o .
+    SELECT ?orphanShape
+    WHERE {
+      {
+        ?orphanShape a sh:NodeShape .
+        FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+      }
+      UNION
+      {
+        ?orphanShape a sh:PropertyShape .
+        FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+      }
+    }
   }
-  UNION
-  {
-    ?orphanShape a sh:PropertyShape .
-    FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
-    ?orphanShape ?p ?o .
-  }
+  ?orphanShape ?p ?o .
 }`;
 }
 

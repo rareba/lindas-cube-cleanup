@@ -47,9 +47,27 @@ Added a hidden button group in the Step 4 (Execute Cleanup) area, below the dele
 
 These buttons are shown only when orphans are detected after deletion, and hidden again after the user makes a choice.
 
+### 4. Fix orphan SPARQL queries for Stardog compatibility
+
+**File:** `web-app/server.js`
+
+All four orphan query functions were restructured to fix `IllegalArgumentException` / `SkipLookupMinusOp` errors on Stardog. The issue was that `FILTER NOT EXISTS` combined with `BIND` inside `UNION` blocks causes Stardog's query optimizer to fail.
+
+**Fix:** Moved the `FILTER NOT EXISTS` patterns into subqueries (`SELECT` subqueries) so that Stardog's MINUS operator does not interact with `BIND` or `UNION` at the same scope level.
+
+Functions fixed:
+- `findOrphansSummaryQuery()` - Each orphan type uses a separate `SELECT` subquery combined with `UNION`
+- `deleteOrphanObservationSetsQuery()` - Orphan set identification wrapped in a subquery
+- `deleteOrphanShapesQuery()` - NodeShape/PropertyShape identification wrapped in a subquery
+- `constructOrphanObservationSetsQuery()` - Backup CONSTRUCT uses subquery for orphan set identification
+- `constructOrphanShapesQuery()` - Backup CONSTRUCT uses subquery for orphan shape identification
+
+Tested against Stardog TEST (`stardog-test.cluster.ldbar.ch`) - all queries now execute without errors.
+
 ## Rationale
 
 - Users should always know what orphan data exists before it gets deleted
 - Provides transparency: exact counts of each orphan type are shown
 - Gives the user explicit control: they can choose to skip cleanup if they want to investigate manually first
 - Cleanup endpoint now returns useful statistics for logging and reporting
+- Orphan queries must work across all supported triplestores (Fuseki, Stardog, GraphDB)
