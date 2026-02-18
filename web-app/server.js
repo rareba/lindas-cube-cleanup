@@ -1624,12 +1624,13 @@ app.post('/api/fuseki/graphs', async (req, res) => {
 app.post('/api/lindas/graphs', async (req, res) => {
     try {
         const { searchTerm } = req.body;
+        const safeTerm = searchTerm ? searchTerm.replace(/[\\"]/g, '\\$&') : '';
 
         let query = `
             SELECT DISTINCT ?graph (COUNT(*) as ?tripleCount)
             WHERE {
                 GRAPH ?graph { ?s ?p ?o }
-                ${searchTerm ? `FILTER(CONTAINS(LCASE(STR(?graph)), LCASE("${searchTerm}")))` : ''}
+                ${safeTerm ? `FILTER(CONTAINS(LCASE(STR(?graph)), LCASE("${safeTerm}")))` : ''}
             }
             GROUP BY ?graph
             ORDER BY DESC(?tripleCount)
@@ -1658,7 +1659,10 @@ app.post('/api/lindas/all-graphs', async (req, res) => {
         `;
 
         const result = await executeSparqlSelect(LINDAS_ENDPOINT, query);
-        res.json(result);
+        const graphs = (result.results?.bindings || [])
+            .map(b => ({ uri: b.graph?.value }))
+            .filter(g => g.uri);
+        res.json({ graphs });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1700,7 +1704,14 @@ app.post('/api/lindas/cubes', async (req, res) => {
         `;
 
         const result = await executeSparqlSelect(LINDAS_ENDPOINT, query);
-        res.json(result);
+        const cubes = (result.results?.bindings || []).map(b => ({
+            cube: b.cube?.value,
+            title: b.title?.value,
+            version: b.version?.value,
+            baseCube: b.baseCube?.value,
+            dateCreated: b.dateCreated?.value
+        })).filter(c => c.cube);
+        res.json({ cubes });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1801,7 +1812,9 @@ app.post('/api/lindas/download-cube', async (req, res) => {
 // Download entire graph from LINDAS (chunked approach for large graphs)
 app.post('/api/lindas/download-graph', async (req, res) => {
     try {
-        const { graphUri, offset = 0, limit = 100000 } = req.body;
+        const { graphUri } = req.body;
+        const offset = Math.max(0, parseInt(req.body.offset, 10) || 0);
+        const limit = Math.min(100000, Math.max(1, parseInt(req.body.limit, 10) || 100000));
 
         // Validate URI parameter to prevent SPARQL injection
         validateUriParam(graphUri, 'graphUri');
@@ -1925,13 +1938,14 @@ app.post('/api/cubes/list-versions', async (req, res) => {
 // Count versions per cube (uses universal query 02)
 app.post('/api/cubes/count-versions', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type, versionsToKeep } = req.body;
 
         // Validate URI parameter to prevent SPARQL injection
         validateUriParam(graphUri, 'graphUri');
         const base = endpoint || baseUrl;
         const triplestoreType = type || 'fuseki';
         const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
+        const keepCount = Math.max(1, parseInt(versionsToKeep, 10) || 2);
 
         // Construct triplestore-specific endpoint
         let sparqlEndpoint;
@@ -1959,7 +1973,7 @@ app.post('/api/cubes/count-versions', async (req, res) => {
                     }
                 }
                 GROUP BY ?baseCube
-                HAVING (COUNT(DISTINCT ?cube) > 2)
+                HAVING (COUNT(DISTINCT ?cube) > ${keepCount})
                 ORDER BY DESC(?versionCount)
             `;
         }
@@ -1976,7 +1990,7 @@ app.post('/api/cubes/count-versions', async (req, res) => {
 // Identify versions to delete - gets all versions and calculates which to keep/delete
 app.post('/api/cubes/identify-deletions', async (req, res) => {
     try {
-        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type, versionsToKeep } = req.body;
 
         // Validate URI parameter to prevent SPARQL injection
         validateUriParam(graphUri, 'graphUri');
@@ -2044,6 +2058,7 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
         // Sort each group by version descending and assign ranks
         const toDelete = [];
         const toKeep = [];
+        const keepCount = Math.max(1, parseInt(versionsToKeep, 10) || 2);
 
         Object.values(baseCubeGroups).forEach(group => {
             // Sort by version number descending (newest first)
@@ -2051,7 +2066,7 @@ app.post('/api/cubes/identify-deletions', async (req, res) => {
 
             group.forEach((v, index) => {
                 const rank = index + 1; // 1-based rank
-                const action = rank <= 2 ? 'KEEP' : 'DELETE';
+                const action = rank <= keepCount ? 'KEEP' : 'DELETE';
                 const cube = { ...v, rank, action };
 
                 if (action === 'DELETE') {
@@ -2489,12 +2504,17 @@ app.post('/api/fuseki/create-dataset', async (req, res) => {
     try {
         const { endpoint, datasetName } = req.body;
 
+        // Validate endpoint to prevent SSRF
+        if (!endpoint || !endpoint.startsWith('http://localhost')) {
+            return res.status(400).json({ error: 'endpoint must be a localhost URL' });
+        }
+
         const response = await fetch(`${endpoint}/$/datasets`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
-            body: `dbName=${datasetName}&dbType=tdb2`
+            body: `dbName=${encodeURIComponent(datasetName)}&dbType=tdb2`
         });
 
         if (!response.ok && response.status !== 409) { // 409 means already exists
@@ -2526,7 +2546,7 @@ app.post('/api/triplestore/create-dataset', async (req, res) => {
                         'Content-Type': 'application/x-www-form-urlencoded',
                         ...authHeaders
                     },
-                    body: `dbName=${datasetName}&dbType=tdb2`
+                    body: `dbName=${encodeURIComponent(datasetName)}&dbType=tdb2`
                 });
 
                 if (!response.ok && response.status !== 409) { // 409 means already exists
@@ -2809,7 +2829,7 @@ function cleanupOldBackups() {
 
         // Clean up old ZIP files (self-contained backups)
         for (const file of files) {
-            if (file.endsWith('.zip') && file.includes('_backup_')) {
+            if (file.endsWith('.zip') && file.startsWith('backup_')) {
                 const filePath = path.join(BACKUP_DIR, file);
                 const stats = fs.statSync(filePath);
                 if (now - stats.mtimeMs > maxAge) {
@@ -3741,7 +3761,7 @@ app.get('/api/backup/:backupId', (req, res) => {
 });
 
 // Restore from backup (reads from self-contained ZIP file)
-app.post('/api/backup/restore', async (req, res) => {
+app.post('/api/backup/restore', requireDestructiveAccess, async (req, res) => {
     try {
         const { backupId, endpoint, baseUrl, dataset, database, repository, username, password, type } = req.body;
 
@@ -3909,7 +3929,7 @@ app.post('/api/backup/upload', upload.single('file'), async (req, res) => {
 });
 
 // Import uploaded file to triplestore (supports both temp file and direct ZIP upload)
-app.post('/api/backup/import', async (req, res) => {
+app.post('/api/backup/import', requireDestructiveAccess, async (req, res) => {
     try {
         const {
             tempId,
@@ -4018,7 +4038,7 @@ app.post('/api/backup/import', async (req, res) => {
 
 // Restore backup to a specified triplestore (reads from self-contained ZIP)
 // Supports selective restore: pass selectedCubes array with cube URIs to restore only specific cubes
-app.post('/api/backup/restore-to', async (req, res) => {
+app.post('/api/backup/restore-to', requireDestructiveAccess, async (req, res) => {
     try {
         const {
             backupId,

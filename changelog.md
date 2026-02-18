@@ -2,6 +2,46 @@
 
 All notable changes to the LINDAS Cube Version Cleanup Tool are documented in this file.
 
+## [2026-02-18] - Bug Fixes: API Contracts, Security, and Reliability
+
+### Fixed
+
+- **`/api/lindas/all-graphs` response contract**: Endpoint now returns `{ graphs: [{ uri }] }`
+  instead of raw SPARQL JSON, matching what the frontend expects. Load Graphs feature
+  now works correctly.
+
+- **`/api/lindas/cubes` response contract**: Endpoint now returns `{ cubes: [{ cube, title, version, baseCube, dateCreated }] }`
+  instead of raw SPARQL JSON. Download All Cubes feature now works correctly.
+
+- **Download-import field name mismatch**: Frontend now correctly reads `downloadResult.triples`
+  (was `downloadResult.ntriples`), fixing the cube download-and-import pipeline.
+
+- **Configurable `versionsToKeep` now respected server-side**: Both `/api/cubes/count-versions`
+  and `/api/cubes/identify-deletions` now accept and use the `versionsToKeep` parameter
+  from the frontend instead of hardcoding `2`.
+
+- **Backup cleanup pattern**: `cleanupOldBackups()` now correctly matches files starting
+  with `backup_` (was looking for `_backup_` which never matched). Old backups are now
+  properly cleaned up after the retention period.
+
+- **SPARQL injection via `searchTerm`**: The `/api/lindas/graphs` endpoint now escapes
+  backslash and double-quote characters in the search term before interpolating into SPARQL.
+
+- **SPARQL injection via `offset`/`limit`**: The `/api/lindas/download-graph` endpoint
+  now validates `offset` and `limit` as non-negative integers before use in SPARQL.
+
+- **Missing auth guards on restore/import endpoints**: Added `requireDestructiveAccess`
+  middleware to `/api/backup/restore`, `/api/backup/import`, and `/api/backup/restore-to`.
+  These endpoints now correctly respect `ENABLE_DESTRUCTIVE_API` and `API_AUTH_TOKEN`.
+
+- **Orphan cleanup wizard hang**: `waitForOrphanCleanupDecision()` now resolves
+  immediately with `skip` if no buttons exist in the DOM, and includes a 5-minute
+  safety timeout to prevent permanent promise hang.
+
+- **Dataset creation parameter injection**: `datasetName` is now URL-encoded with
+  `encodeURIComponent()` in both legacy and current Fuseki dataset creation endpoints.
+  Legacy endpoint also validates that `endpoint` is a localhost URL to prevent SSRF.
+
 ## [2026-02-15] - Orphan Shape Wizard Integration
 
 ### Added

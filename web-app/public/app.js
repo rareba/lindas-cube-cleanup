@@ -770,7 +770,7 @@ async function downloadAllCubes() {
 
                 const downloadResult = await downloadResponse.json();
 
-                if (!downloadResponse.ok || !downloadResult.ntriples) {
+                if (!downloadResponse.ok || !downloadResult.triples) {
                     throw new Error('Failed to download cube data');
                 }
 
@@ -780,7 +780,7 @@ async function downloadAllCubes() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         ...config,
-                        ntriples: downloadResult.ntriples,
+                        triples: downloadResult.triples,
                         graphUri: state.downloadGraph
                     })
                 });
@@ -1328,7 +1328,8 @@ async function wizardPreviewDeletions() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 ...config,
-                graphUri: state.wizardGraph
+                graphUri: state.wizardGraph,
+                versionsToKeep: state.versionsToKeep || 2
             })
         });
 
@@ -1993,30 +1994,45 @@ function waitForOrphanCleanupDecision() {
         const skipBtn = document.getElementById('btn-skip-orphan-cleanup');
         const previewBtn = document.getElementById('btn-preview-orphans');
 
-        function removeAllListeners() {
+        // If no buttons exist in the DOM, resolve immediately with 'skip'
+        if (!cleanupBtn && !skipBtn && !previewBtn) {
+            resolve('skip');
+            return;
+        }
+
+        let timer = null;
+
+        function cleanup() {
+            if (timer) clearTimeout(timer);
             if (cleanupBtn) cleanupBtn.removeEventListener('click', onCleanup);
             if (skipBtn) skipBtn.removeEventListener('click', onSkip);
             if (previewBtn) previewBtn.removeEventListener('click', onPreview);
         }
 
         function onCleanup() {
-            removeAllListeners();
+            cleanup();
             resolve('cleanup');
         }
 
         function onSkip() {
-            removeAllListeners();
+            cleanup();
             resolve('skip');
         }
 
         function onPreview() {
-            removeAllListeners();
+            cleanup();
             resolve('preview');
         }
 
         if (cleanupBtn) cleanupBtn.addEventListener('click', onCleanup);
         if (skipBtn) skipBtn.addEventListener('click', onSkip);
         if (previewBtn) previewBtn.addEventListener('click', onPreview);
+
+        // Safety timeout: auto-skip after 5 minutes to prevent permanent hang
+        timer = setTimeout(() => {
+            cleanup();
+            resolve('skip');
+        }, 300000);
     });
 }
 
