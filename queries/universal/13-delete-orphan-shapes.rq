@@ -1,0 +1,57 @@
+# Query 13: DELETE orphan shapes and all their nested triples
+# PARAMETER: Replace GRAPH_URI with the target graph
+# Example: https://lindas.admin.ch/sfoe/cube
+#
+# WARNING: This is a destructive operation!
+# Always run query 11 (find) and query 12 (preview) BEFORE this delete.
+#
+# Deletes:
+#   1. Shape node and all its direct triples
+#   2. All property shapes linked via sh:property
+#   3. All RDF list nodes inside property shapes (sh:in value lists)
+#   4. Any incoming references to the shape
+#
+# Uses BIND pattern for Stardog compatibility.
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+DELETE {
+  GRAPH <GRAPH_URI> {
+    ?s ?p ?o .
+  }
+}
+WHERE {
+  GRAPH <GRAPH_URI> {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?orphanShape .
+      ?anyCube a cube:Cube .
+    }
+
+    {
+      ?orphanShape ?p ?o .
+      BIND(?orphanShape AS ?s)
+    }
+    UNION
+    {
+      ?s ?p ?orphanShape .
+      BIND(?orphanShape AS ?o)
+    }
+    UNION
+    {
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?p ?o .
+      BIND(?propShape AS ?s)
+    }
+    UNION
+    {
+      ?orphanShape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?p ?o .
+      BIND(?list AS ?s)
+    }
+  }
+}

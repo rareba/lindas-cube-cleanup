@@ -15,6 +15,18 @@ The solution uses a **ranked deletion approach**:
 3. **Selection**: Select all versions with rank > 2 for deletion
 4. **Chunked Deletion**: Delete observations first (in chunks), then metadata and shapes
 
+### Orphan Shape Cleanup
+
+When cube versions are deleted, the SHACL constraint shapes they reference via
+`cube:observationConstraint` may be left behind as unreferenced data ("orphan shapes").
+These shapes include:
+- The NodeShape itself (typed as `sh:NodeShape`)
+- Property shapes linked via `sh:property` (defining cube dimensions/measures)
+- RDF list nodes inside property shapes (e.g., `sh:in` value enumerations)
+
+The orphan shape cleanup step (queries 11-15) runs AFTER cube version deletion
+to find and remove these leftover structures.
+
 ### Why Chunked Deletion?
 
 Large cubes can have millions of observations. Deleting everything in a single query can:
@@ -44,7 +56,21 @@ lindas-delete-cube-versions-except2/
 │   ├── 06-delete-single-cube.rq
 │   ├── 07-delete-observations-chunked.rq
 │   ├── 08-delete-observation-links.rq
-│   └── 09-delete-cube-metadata.rq
+│   ├── 09-delete-cube-metadata.rq
+│   ├── 10-count-observations-per-cube.rq
+│   ├── 11-find-orphan-shapes.rq          # NEW: Orphan shape discovery
+│   ├── 12-preview-orphan-shape-triples.rq # NEW: Preview orphan shape triples
+│   ├── 13-delete-orphan-shapes.rq         # NEW: Delete orphan shapes
+│   ├── 14-count-orphan-shapes.rq          # NEW: Count orphan shapes summary
+│   ├── 15-preview-single-orphan-shape.rq  # NEW: Inspect single orphan shape
+│   └── universal/                         # Parameterized versions (GRAPH_URI)
+│       ├── 01-list-all-cube-versions.rq
+│       ├── ...
+│       ├── 11-find-orphan-shapes.rq
+│       ├── 12-preview-orphan-shape-triples.rq
+│       ├── 13-delete-orphan-shapes.rq
+│       ├── 14-count-orphan-shapes.rq
+│       └── 15-preview-single-orphan-shape.rq
 ├── scripts/
 │   ├── download-graph.ps1
 │   ├── download-graph-chunked.ps1
@@ -125,10 +151,12 @@ lindas-delete-cube-versions-except2/
 A cube consists of:
 
 1. **Cube metadata**: Direct properties of the cube (type, dates, titles)
-2. **Observation Constraint (Shape)**: SHACL shapes defining the cube structure
-3. **Property Shapes**: Nested shapes for each dimension/measure
-4. **Observation Set**: Container linking to observations
+2. **Observation Constraint (Shape)**: SHACL NodeShape defining the cube structure, linked via `cube:observationConstraint`
+3. **Property Shapes**: Nested shapes for each dimension/measure, linked from the NodeShape via `sh:property`. Each property shape contains constraint properties like `sh:path`, `sh:datatype`, `sh:minCount`, `sh:maxCount`, `sh:nodeKind`, and `sh:in` (RDF lists of allowed values).
+4. **Observation Set**: Container linking to observations via `cube:observationSet`
 5. **Observations**: The actual data points (typically 90%+ of triples)
+
+When a cube version is deleted but its shape is also referenced by another cube version, the shape must be preserved. When no remaining cube references a shape, it becomes an "orphan" and should be cleaned up separately (queries 11-15).
 
 ## Safety Considerations
 

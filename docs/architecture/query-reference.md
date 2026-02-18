@@ -147,3 +147,122 @@ This document describes each query in the `queries/` folder.
    - Run `09-delete-cube-metadata.rq`
 
 Or use the automated `delete-old-versions.ps1` script.
+
+---
+
+## Orphan Shape Queries
+
+These queries handle cleanup of SHACL shapes that are left behind after cube
+version deletion. When a cube version is deleted, its observation constraint
+shape (and all nested property shapes) may remain in the graph if no other
+cube references them. These "orphan shapes" waste storage and create noise
+in the data.
+
+### 11-find-orphan-shapes.rq
+
+**Purpose**: Finds all SHACL NodeShapes in the graph that are NOT referenced
+by any remaining cube via `cube:observationConstraint`.
+
+**Output columns**:
+- `shape`: The orphan shape URI
+- `shapeType`: The RDF type(s) of the shape
+- `propertyShapeCount`: Number of property shapes nested under this shape
+- `estimatedTriples`: Approximate count of all triples that belong to this shape tree
+
+**Usage**: Run this first to discover orphan shapes and assess their count and size.
+
+---
+
+### 12-preview-orphan-shape-triples.rq
+
+**Purpose**: CONSTRUCT query that returns all triples belonging to orphan shapes.
+This produces the exact set of triples that query 13 would delete.
+
+**Output**: An RDF graph containing all orphan shape triples (shape direct triples,
+incoming references, property shapes, RDF list nodes).
+
+**Usage**: Run before query 13 to verify exactly what will be deleted.
+The output can be saved as a backup file.
+
+---
+
+### 13-delete-orphan-shapes.rq
+
+**Purpose**: Deletes all orphan shapes and their complete nested structure.
+
+**Deletes**:
+- Shape node triples (rdf:type, sh:closed, sh:property links, etc.)
+- All property shapes linked via `sh:property`
+- All RDF list nodes inside property shapes (`sh:in` value lists)
+- Any incoming references to the orphan shape
+
+**Warning**: This is a destructive operation. Always run queries 11 and 12 first.
+
+**Usage**: Run after cube version deletion to clean up leftover shapes.
+
+---
+
+### 14-count-orphan-shapes.rq
+
+**Purpose**: Quick summary count of orphan shapes and their total triples.
+
+**Output columns**:
+- `orphanShapeCount`: Total number of orphan shapes found
+- `totalOrphanTriples`: Total triples across all orphan shapes
+
+**Usage**: Quick impact assessment before running the full cleanup.
+
+---
+
+### 15-preview-single-orphan-shape.rq
+
+**Purpose**: Shows all triples for a specific orphan shape (parameterized).
+
+**Parameters**: Replace `SHAPE_URI_HERE` with actual shape URI.
+
+**Output columns**:
+- `subject`, `predicate`, `object`: The triple components
+- `category`: Type of triple (shape-direct, shape-incoming, property-shape, rdf-list-node)
+
+**Usage**: Deep inspection of a specific orphan shape before deletion.
+
+---
+
+## Query Execution Order: Full Cleanup (Cube Versions + Orphan Shapes)
+
+1. Run `02-count-versions-per-cube.rq` for overview
+2. Run `03-identify-versions-to-delete.rq` to get list of cube versions to delete
+3. Run `04-preview-triples-to-delete.rq` for impact assessment
+4. For each cube to delete:
+   - Run `07-delete-observations-chunked.rq` repeatedly
+   - Run `08-delete-observation-links.rq`
+   - Run `09-delete-cube-metadata.rq`
+5. Run `14-count-orphan-shapes.rq` to check for orphan shapes
+6. Run `11-find-orphan-shapes.rq` for detailed orphan shape list
+7. Run `12-preview-orphan-shape-triples.rq` to preview cleanup scope
+8. Run `13-delete-orphan-shapes.rq` to clean up orphan shapes
+9. Run `14-count-orphan-shapes.rq` again to verify cleanup (should return 0)
+
+## Wizard Integration
+
+As of 2026-02-15, the orphan shape queries (11-15) are fully integrated into the
+Deletion Wizard (Step 4). The wizard automates the full cleanup workflow:
+
+1. **Detection**: After cube version deletion completes, the wizard automatically runs
+   orphan detection (combining the general summary query with query 14 for shape-specific
+   counts).
+
+2. **Preview**: Users can click "Preview Orphan Triples" to run the CONSTRUCT query (12)
+   and see a sample of the triples that would be deleted.
+
+3. **Cleanup**: Clicking "Clean Up Orphans" runs the comprehensive delete queries for
+   both orphan observation sets and orphan shapes (query 13 pattern).
+
+4. **Verification**: After cleanup, the wizard automatically runs query 14 again to
+   verify that remaining orphan shape count is 0.
+
+The wizard flow is: delete old versions -> detect orphan shapes -> preview (optional)
+-> delete orphan shapes -> verify.
+
+All orphan shape queries are also available as templates in the Query Editor for
+manual execution.

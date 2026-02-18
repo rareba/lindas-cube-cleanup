@@ -1,0 +1,54 @@
+# Query 14: Count orphan shapes in the SFOE graph - summary view
+# Provides a quick overview of orphan shape cleanup impact:
+#   - Total number of orphan shapes
+#   - Total triples across all orphan shapes
+#
+# Purpose: Quick impact assessment before cleanup
+# Safety: This is a read-only SELECT query, no data is modified.
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT
+  (COUNT(DISTINCT ?orphanShape) AS ?orphanShapeCount)
+  (COUNT(DISTINCT ?triple) AS ?totalOrphanTriples)
+WHERE {
+  GRAPH <https://lindas.admin.ch/sfoe/cube> {
+    # Find all NodeShapes not referenced by any cube
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?orphanShape .
+      ?anyCube a cube:Cube .
+    }
+
+    # Count all triples that belong to this orphan shape tree
+    {
+      # Shape's own triples
+      ?orphanShape ?sp ?so .
+      BIND(CONCAT(STR(?orphanShape), "|", STR(?sp), "|", STR(?so)) AS ?triple)
+    }
+    UNION
+    {
+      # Incoming references to the shape
+      ?inS ?inP ?orphanShape .
+      BIND(CONCAT(STR(?inS), "|", STR(?inP), "|", STR(?orphanShape)) AS ?triple)
+    }
+    UNION
+    {
+      # Property shape triples
+      ?orphanShape sh:property ?ps .
+      ?ps ?psp ?pso .
+      BIND(CONCAT(STR(?ps), "|", STR(?psp), "|", STR(?pso)) AS ?triple)
+    }
+    UNION
+    {
+      # RDF list nodes
+      ?orphanShape sh:property ?ps .
+      ?ps sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?lp ?lo .
+      BIND(CONCAT(STR(?list), "|", STR(?lp), "|", STR(?lo)) AS ?triple)
+    }
+  }
+}

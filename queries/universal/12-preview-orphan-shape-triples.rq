@@ -1,0 +1,50 @@
+# Query 12: PREVIEW - Show all triples belonging to orphan shapes
+# PARAMETER: Replace GRAPH_URI with the target graph
+# Example: https://lindas.admin.ch/sfoe/cube
+#
+# This CONSTRUCT query builds the full set of triples that would be deleted
+# when cleaning up orphan shapes. Run BEFORE the delete query to verify.
+#
+# Purpose: Safety preview before deletion
+# Safety: This is a read-only CONSTRUCT query, no data is modified.
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+CONSTRUCT {
+  ?s ?p ?o .
+}
+WHERE {
+  GRAPH <GRAPH_URI> {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?orphanShape .
+      ?anyCube a cube:Cube .
+    }
+
+    {
+      ?orphanShape ?p ?o .
+      BIND(?orphanShape AS ?s)
+    }
+    UNION
+    {
+      ?s ?p ?orphanShape .
+      BIND(?orphanShape AS ?o)
+    }
+    UNION
+    {
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?p ?o .
+      BIND(?propShape AS ?s)
+    }
+    UNION
+    {
+      ?orphanShape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?p ?o .
+      BIND(?list AS ?s)
+    }
+  }
+}

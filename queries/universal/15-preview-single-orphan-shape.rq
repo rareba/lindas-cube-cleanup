@@ -1,0 +1,53 @@
+# Query 15: PREVIEW - Show all triples for a SINGLE orphan shape
+# PARAMETERS:
+#   - Replace GRAPH_URI with the target graph
+#   - Replace SHAPE_URI with the shape to inspect
+#
+# Purpose: Deep inspection of a specific orphan shape
+# Safety: This is a read-only SELECT query, no data is modified.
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?subject ?predicate ?object ?category
+WHERE {
+  GRAPH <GRAPH_URI> {
+    BIND(<SHAPE_URI> AS ?shape)
+
+    ?shape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?shape .
+      ?anyCube a cube:Cube .
+    }
+
+    {
+      ?shape ?predicate ?object .
+      BIND(?shape AS ?subject)
+      BIND("shape-direct" AS ?category)
+    }
+    UNION
+    {
+      ?subject ?predicate ?shape .
+      BIND(?shape AS ?object)
+      BIND("shape-incoming" AS ?category)
+    }
+    UNION
+    {
+      ?shape sh:property ?propShape .
+      ?propShape ?predicate ?object .
+      BIND(?propShape AS ?subject)
+      BIND("property-shape" AS ?category)
+    }
+    UNION
+    {
+      ?shape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?predicate ?object .
+      BIND(?list AS ?subject)
+      BIND("rdf-list-node" AS ?category)
+    }
+  }
+}
+ORDER BY ?category ?subject ?predicate

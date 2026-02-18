@@ -698,33 +698,47 @@ WHERE {
 }
 
 /**
- * Query to find orphan SHACL shapes (CONSTRUCT for backup)
+ * Query to find orphan SHACL shapes (CONSTRUCT for backup/preview)
+ * Comprehensive version matching query 12: captures shape triples,
+ * incoming references, property shape triples, and RDF list nodes.
  */
 function constructOrphanShapesQuery(graphUri) {
     return `${ORPHAN_PREFIXES}
 CONSTRUCT { ?s ?p ?o }
 WHERE {
-  {
-    SELECT ?s ?p ?o
-    WHERE {
-      GRAPH <${graphUri}> {
-        {
-          SELECT ?orphanShape
-          WHERE {
-            {
-              ?orphanShape a sh:NodeShape .
-              FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
-            }
-            UNION
-            {
-              ?orphanShape a sh:PropertyShape .
-              FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
-            }
-          }
-        }
-        ?orphanShape ?p ?o .
-        BIND(?orphanShape AS ?s)
-      }
+  GRAPH <${graphUri}> {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?orphanShape .
+      ?anyCube a cube:Cube .
+    }
+
+    {
+      # Shape's own outgoing triples
+      ?orphanShape ?p ?o .
+      BIND(?orphanShape AS ?s)
+    }
+    UNION
+    {
+      # Incoming references to the shape
+      ?s ?p ?orphanShape .
+      BIND(?orphanShape AS ?o)
+    }
+    UNION
+    {
+      # Property shape triples
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?p ?o .
+      BIND(?propShape AS ?s)
+    }
+    UNION
+    {
+      # RDF list nodes in property shapes (sh:in value lists)
+      ?orphanShape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?p ?o .
+      BIND(?list AS ?s)
     }
   }
 }`;
@@ -798,31 +812,149 @@ WHERE {
 }
 
 /**
- * Query to delete orphan SHACL shapes
+ * Query to delete orphan SHACL shapes and their full nested structure.
+ * Comprehensive version matching query 13: deletes shape triples,
+ * incoming references, property shape triples, and RDF list nodes.
+ * Uses BIND pattern for Stardog compatibility.
  */
 function deleteOrphanShapesQuery(graphUri) {
     return `${ORPHAN_PREFIXES}
-WITH <${graphUri}>
 DELETE {
-  ?orphanShape ?p ?o .
+  GRAPH <${graphUri}> {
+    ?s ?p ?o .
+  }
 }
 WHERE {
-  {
-    SELECT ?orphanShape
-    WHERE {
+  GRAPH <${graphUri}> {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?orphanShape .
+      ?anyCube a cube:Cube .
+    }
+
+    {
+      # Shape's own outgoing triples
+      ?orphanShape ?p ?o .
+      BIND(?orphanShape AS ?s)
+    }
+    UNION
+    {
+      # Incoming references to the shape
+      ?s ?p ?orphanShape .
+      BIND(?orphanShape AS ?o)
+    }
+    UNION
+    {
+      # Property shape triples
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?p ?o .
+      BIND(?propShape AS ?s)
+    }
+    UNION
+    {
+      # RDF list nodes in property shapes (sh:in value lists)
+      ?orphanShape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?p ?o .
+      BIND(?list AS ?s)
+    }
+  }
+}`;
+}
+
+/**
+ * Query to count orphan shapes with total triple count (query 14).
+ * Returns orphanShapeCount and totalOrphanTriples for quick impact assessment.
+ */
+function countOrphanShapesQuery(graphUri) {
+    return `${ORPHAN_PREFIXES}
+SELECT
+  (COUNT(DISTINCT ?orphanShape) AS ?orphanShapeCount)
+  (COUNT(DISTINCT ?triple) AS ?totalOrphanTriples)
+WHERE {
+  GRAPH <${graphUri}> {
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?orphanShape .
+      ?anyCube a cube:Cube .
+    }
+
+    {
+      ?orphanShape ?sp ?so .
+      BIND(CONCAT(STR(?orphanShape), "|", STR(?sp), "|", STR(?so)) AS ?triple)
+    }
+    UNION
+    {
+      ?inS ?inP ?orphanShape .
+      BIND(CONCAT(STR(?inS), "|", STR(?inP), "|", STR(?orphanShape)) AS ?triple)
+    }
+    UNION
+    {
+      ?orphanShape sh:property ?ps .
+      ?ps ?psp ?pso .
+      BIND(CONCAT(STR(?ps), "|", STR(?psp), "|", STR(?pso)) AS ?triple)
+    }
+    UNION
+    {
+      ?orphanShape sh:property ?ps .
+      ?ps sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?lp ?lo .
+      BIND(CONCAT(STR(?list), "|", STR(?lp), "|", STR(?lo)) AS ?triple)
+    }
+  }
+}`;
+}
+
+/**
+ * Query to find individual orphan shapes with details (query 11).
+ * Returns each orphan shape with its type, property shape count, and estimated triple count.
+ */
+function findOrphanShapesQuery(graphUri) {
+    return `${ORPHAN_PREFIXES}
+SELECT
+  ?shape
+  ?shapeType
+  (COUNT(DISTINCT ?propShape) AS ?propertyShapeCount)
+  (COUNT(DISTINCT ?allTriple) AS ?estimatedTriples)
+WHERE {
+  GRAPH <${graphUri}> {
+    ?shape a sh:NodeShape .
+
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?shape .
+      ?anyCube a cube:Cube .
+    }
+
+    OPTIONAL { ?shape rdf:type ?shapeType }
+
+    OPTIONAL { ?shape sh:property ?propShape }
+
+    OPTIONAL {
       {
-        ?orphanShape a sh:NodeShape .
-        FILTER NOT EXISTS { ?anyCube cube:observationConstraint ?orphanShape }
+        ?shape ?sp ?so .
+        BIND(CONCAT(STR(?shape), "|", STR(?sp), "|", STR(?so)) AS ?allTriple)
       }
       UNION
       {
-        ?orphanShape a sh:PropertyShape .
-        FILTER NOT EXISTS { ?anyShape sh:property ?orphanShape }
+        ?shape sh:property ?ps .
+        ?ps ?psp ?pso .
+        BIND(CONCAT(STR(?ps), "|", STR(?psp), "|", STR(?pso)) AS ?allTriple)
+      }
+      UNION
+      {
+        ?shape sh:property ?ps .
+        ?ps sh:in ?list .
+        ?list rdf:rest*/rdf:first ?item .
+        ?list ?lp ?lo .
+        BIND(CONCAT(STR(?list), "|", STR(?lp), "|", STR(?lo)) AS ?allTriple)
       }
     }
   }
-  ?orphanShape ?p ?o .
-}`;
+}
+GROUP BY ?shape ?shapeType
+ORDER BY ?shape`;
 }
 
 /**
@@ -3174,7 +3306,7 @@ app.post('/api/backup/create-multi', async (req, res) => {
     }
 });
 
-// Orphan detection endpoint
+// Orphan detection endpoint - includes both general orphan summary and shape-specific counts
 app.post('/api/orphans/detect', async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
@@ -3194,13 +3326,20 @@ app.post('/api/orphans/detect', async (req, res) => {
             sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
         }
 
-        const query = findOrphansSummaryQuery(graphUri);
-        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
-        
-        const bindings = result.results?.bindings || [];
+        // Run both the general summary and shape-specific count in parallel
+        const summaryQuery = findOrphansSummaryQuery(graphUri);
+        const shapeCountQuery = countOrphanShapesQuery(graphUri);
+
+        const [summaryResult, shapeCountResult] = await Promise.all([
+            executeSparqlSelect(sparqlEndpoint, summaryQuery, auth),
+            executeSparqlSelect(sparqlEndpoint, shapeCountQuery, auth)
+        ]);
+
+        // Parse general orphan summary
+        const bindings = summaryResult.results?.bindings || [];
         const summary = {};
         let totalCount = 0;
-        
+
         bindings.forEach(binding => {
             const type = binding.orphanType?.value;
             const count = parseInt(binding.count?.value) || 0;
@@ -3210,10 +3349,64 @@ app.post('/api/orphans/detect', async (req, res) => {
             }
         });
 
+        // Parse orphan shape-specific counts (query 14 results)
+        const shapeBindings = shapeCountResult.results?.bindings || [];
+        let orphanShapeCount = 0;
+        let orphanShapeTriples = 0;
+        if (shapeBindings.length > 0) {
+            orphanShapeCount = parseInt(shapeBindings[0].orphanShapeCount?.value) || 0;
+            orphanShapeTriples = parseInt(shapeBindings[0].totalOrphanTriples?.value) || 0;
+        }
+
         res.json({
             success: true,
             totalCount: totalCount,
             summary: summary,
+            graphUri: graphUri,
+            // Shape-specific details from query 14
+            shapes: {
+                orphanShapeCount: orphanShapeCount,
+                orphanShapeTriples: orphanShapeTriples
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Orphan shapes count endpoint - returns precise shape and triple counts (query 14)
+app.post('/api/orphans/shapes/count', async (req, res) => {
+    try {
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        validateUriParam(graphUri, 'graphUri');
+        const base = endpoint || baseUrl;
+        const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
+        const auth = { username, password };
+
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
+
+        const query = countOrphanShapesQuery(graphUri);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
+
+        const bindings = result.results?.bindings || [];
+        let orphanShapeCount = 0;
+        let totalOrphanTriples = 0;
+        if (bindings.length > 0) {
+            orphanShapeCount = parseInt(bindings[0].orphanShapeCount?.value) || 0;
+            totalOrphanTriples = parseInt(bindings[0].totalOrphanTriples?.value) || 0;
+        }
+
+        res.json({
+            success: true,
+            orphanShapeCount: orphanShapeCount,
+            totalOrphanTriples: totalOrphanTriples,
             graphUri: graphUri
         });
     } catch (error) {
@@ -3221,7 +3414,82 @@ app.post('/api/orphans/detect', async (req, res) => {
     }
 });
 
-// Orphan cleanup endpoint
+// Orphan shapes list endpoint - returns individual orphan shapes with details (query 11)
+app.post('/api/orphans/shapes/list', async (req, res) => {
+    try {
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        validateUriParam(graphUri, 'graphUri');
+        const base = endpoint || baseUrl;
+        const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
+        const auth = { username, password };
+
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
+
+        const query = findOrphanShapesQuery(graphUri);
+        const result = await executeSparqlSelect(sparqlEndpoint, query, auth);
+
+        const bindings = result.results?.bindings || [];
+        const shapes = bindings.map(binding => ({
+            shape: binding.shape?.value || '',
+            shapeType: binding.shapeType?.value || '',
+            propertyShapeCount: parseInt(binding.propertyShapeCount?.value) || 0,
+            estimatedTriples: parseInt(binding.estimatedTriples?.value) || 0
+        }));
+
+        res.json({
+            success: true,
+            shapes: shapes,
+            count: shapes.length,
+            graphUri: graphUri
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Orphan shapes preview endpoint - returns CONSTRUCT triples for preview (query 12)
+app.post('/api/orphans/shapes/preview', async (req, res) => {
+    try {
+        const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
+
+        validateUriParam(graphUri, 'graphUri');
+        const base = endpoint || baseUrl;
+        const triplestoreType = type || 'fuseki';
+        const db = resolveDbName({ type: triplestoreType, dataset, database, repository });
+        const auth = { username, password };
+
+        let sparqlEndpoint;
+        if (triplestoreType === 'graphdb') {
+            sparqlEndpoint = db ? `${base}/repositories/${db}` : base;
+        } else {
+            sparqlEndpoint = db ? `${base}/${db}/query` : `${base}/query`;
+        }
+
+        const query = constructOrphanShapesQuery(graphUri);
+        const triples = await executeSparqlConstruct(sparqlEndpoint, query, auth);
+
+        const tripleCount = triples ? triples.split('\n').filter(line => line.trim()).length : 0;
+
+        res.json({
+            success: true,
+            triples: triples,
+            tripleCount: tripleCount,
+            graphUri: graphUri
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Orphan cleanup endpoint - deletes orphan observation sets and shapes,
+// then verifies cleanup with shape-specific count (query 14)
 app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
     try {
         const { endpoint, baseUrl, dataset, database, repository, graphUri, username, password, type } = req.body;
@@ -3249,9 +3517,14 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
             updateEndpoint = db ? `${base}/${db}/update` : `${base}/update`;
         }
 
-        // Count orphans before deletion
+        // Count orphans before deletion (general summary + shape-specific)
         const countQuery = findOrphansSummaryQuery(graphUri);
-        const beforeResult = await executeSparqlSelect(sparqlEndpoint, countQuery, auth);
+        const shapeCountQuery = countOrphanShapesQuery(graphUri);
+        const [beforeResult, beforeShapeResult] = await Promise.all([
+            executeSparqlSelect(sparqlEndpoint, countQuery, auth),
+            executeSparqlSelect(sparqlEndpoint, shapeCountQuery, auth)
+        ]);
+
         const beforeBindings = beforeResult.results?.bindings || [];
         const beforeSummary = {};
         let beforeTotal = 0;
@@ -3264,16 +3537,28 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
             }
         });
 
+        const beforeShapeBindings = beforeShapeResult.results?.bindings || [];
+        let beforeShapeCount = 0;
+        let beforeShapeTriples = 0;
+        if (beforeShapeBindings.length > 0) {
+            beforeShapeCount = parseInt(beforeShapeBindings[0].orphanShapeCount?.value) || 0;
+            beforeShapeTriples = parseInt(beforeShapeBindings[0].totalOrphanTriples?.value) || 0;
+        }
+
         // Delete orphan observation sets first
         const obsQuery = deleteOrphanObservationSetsQuery(graphUri);
         await executeSparqlUpdate(updateEndpoint, obsQuery, auth);
 
-        // Delete orphan shapes
+        // Delete orphan shapes (comprehensive query matching query 13)
         const shapesQuery = deleteOrphanShapesQuery(graphUri);
         await executeSparqlUpdate(updateEndpoint, shapesQuery, auth);
 
-        // Count orphans after deletion to calculate removed counts
-        const afterResult = await executeSparqlSelect(sparqlEndpoint, countQuery, auth);
+        // Count orphans after deletion to calculate removed counts and verify
+        const [afterResult, afterShapeResult] = await Promise.all([
+            executeSparqlSelect(sparqlEndpoint, countQuery, auth),
+            executeSparqlSelect(sparqlEndpoint, shapeCountQuery, auth)
+        ]);
+
         const afterBindings = afterResult.results?.bindings || [];
         const afterSummary = {};
         let afterTotal = 0;
@@ -3286,6 +3571,14 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
             }
         });
 
+        const afterShapeBindings = afterShapeResult.results?.bindings || [];
+        let afterShapeCount = 0;
+        let afterShapeTriples = 0;
+        if (afterShapeBindings.length > 0) {
+            afterShapeCount = parseInt(afterShapeBindings[0].orphanShapeCount?.value) || 0;
+            afterShapeTriples = parseInt(afterShapeBindings[0].totalOrphanTriples?.value) || 0;
+        }
+
         // Calculate removed counts per type
         const removed = {};
         for (const orphanType of Object.keys(beforeSummary)) {
@@ -3297,7 +3590,14 @@ app.post('/api/orphans/cleanup', requireDestructiveAccess, async (req, res) => {
             success: true,
             message: 'Orphan triples cleaned up successfully',
             removed: removed,
-            totalRemoved: totalRemoved
+            totalRemoved: totalRemoved,
+            // Shape-specific verification (should be 0 after successful cleanup)
+            verification: {
+                remainingOrphanShapes: afterShapeCount,
+                remainingOrphanShapeTriples: afterShapeTriples,
+                shapesRemoved: beforeShapeCount - afterShapeCount,
+                shapeTriplesCleaned: beforeShapeTriples - afterShapeTriples
+            }
         });
     } catch (error) {
         res.status(500).json({ error: error.message });

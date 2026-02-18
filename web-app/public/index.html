@@ -525,6 +525,7 @@
                                 </div>
 
                                 <div id="orphan-cleanup-actions" class="button-group hidden" style="margin-top: 1rem;">
+                                    <button id="btn-preview-orphans" class="btn btn-primary">Preview Orphan Triples</button>
                                     <button id="btn-cleanup-orphans" class="btn btn-danger">Clean Up Orphans</button>
                                     <button id="btn-skip-orphan-cleanup" class="btn btn-secondary">Skip Cleanup</button>
                                 </div>
@@ -617,11 +618,14 @@
                                     <option value="find-orphans-summary">Find All Orphans - Summary</option>
                                     <option value="find-orphan-observations">Find Orphan Observations</option>
                                     <option value="find-orphan-sets">Find Orphan Observation Sets</option>
+                                    <option value="count-orphan-shapes">Count Orphan Shapes (Query 14)</option>
+                                    <option value="find-orphan-shapes">Find Orphan Shapes - Details (Query 11)</option>
                                 </optgroup>
                                 <optgroup label="Write Queries (DESTRUCTIVE)">
                                     <option value="delete-single">Delete Single Cube Version</option>
                                     <option value="delete-old-versions">Delete Old Versions (Keep Newest 2)</option>
                                     <option value="delete-orphans">Delete All Orphans</option>
+                                    <option value="delete-orphan-shapes">Delete Orphan Shapes (Query 13)</option>
                                 </optgroup>
                             </select>
                         </div>

@@ -1,0 +1,63 @@
+# Query 12: PREVIEW - Show all triples that belong to orphan shapes
+# This CONSTRUCT query builds the full set of triples that would be deleted
+# when cleaning up orphan shapes. Run this BEFORE the actual delete query
+# to verify what will be removed.
+#
+# An orphan shape is a sh:NodeShape not referenced by any cube via
+# cube:observationConstraint.
+#
+# The query captures:
+#   1. The shape's own triples (rdf:type, sh:closed, etc.)
+#   2. Property shape triples (sh:property -> property shape -> constraints)
+#   3. RDF list nodes inside property shapes (sh:in lists)
+#   4. Any incoming references to the shape (except cube:observationConstraint,
+#      which by definition does not exist for orphans)
+#
+# Purpose: Safety preview before deletion
+# Safety: This is a read-only CONSTRUCT query, no data is modified.
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+CONSTRUCT {
+  ?s ?p ?o .
+}
+WHERE {
+  GRAPH <https://lindas.admin.ch/sfoe/cube> {
+    # Identify orphan shapes: sh:NodeShape not referenced by any cube
+    ?orphanShape a sh:NodeShape .
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?orphanShape .
+      ?anyCube a cube:Cube .
+    }
+
+    {
+      # 1. Shape's own outgoing triples
+      ?orphanShape ?p ?o .
+      BIND(?orphanShape AS ?s)
+    }
+    UNION
+    {
+      # 2. Incoming references to the shape
+      ?s ?p ?orphanShape .
+      BIND(?orphanShape AS ?o)
+    }
+    UNION
+    {
+      # 3. Property shape triples (shape -> sh:property -> property shape)
+      ?orphanShape sh:property ?propShape .
+      ?propShape ?p ?o .
+      BIND(?propShape AS ?s)
+    }
+    UNION
+    {
+      # 4. RDF list nodes in property shapes (sh:in value lists)
+      ?orphanShape sh:property ?propShape .
+      ?propShape sh:in ?list .
+      ?list rdf:rest*/rdf:first ?item .
+      ?list ?p ?o .
+      BIND(?list AS ?s)
+    }
+  }
+}

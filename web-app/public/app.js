@@ -60,7 +60,10 @@ const state = {
         deletedCubes: [],
         keptCubes: [],
         totalTriplesDeleted: 0,
-        backupIds: []
+        backupIds: [],
+        orphanShapesCleaned: 0,
+        orphanShapeTriplesCleaned: 0,
+        orphanCleanupPerformed: false
     },
 
     // Query editor
@@ -1064,7 +1067,10 @@ function resetWizard() {
         deletedCubes: [],
         keptCubes: [],
         totalTriplesDeleted: 0,
-        backupIds: []
+        backupIds: [],
+        orphanShapesCleaned: 0,
+        orphanShapeTriplesCleaned: 0,
+        orphanCleanupPerformed: false
     };
 
     // Reset confirm checkbox
@@ -1822,7 +1828,8 @@ async function wizardExecuteDeletion() {
         // Orphan detection and optional cleanup after deletion
         if (cleanupOrphansAfter) {
             addLog('');
-            addLog('Detecting orphan triples...');
+            addLog('--- ORPHAN SHAPE CLEANUP ---');
+            addLog('Detecting orphan triples (observation sets and SHACL shapes)...');
             try {
                 const detectResponse = await fetch('/api/orphans/detect', {
                     method: 'POST',
@@ -1837,6 +1844,7 @@ async function wizardExecuteDeletion() {
                     const detectData = await detectResponse.json();
                     const summary = detectData.summary || {};
                     const totalCount = detectData.totalCount || 0;
+                    const shapes = detectData.shapes || {};
 
                     if (totalCount > 0) {
                         // Show orphan counts in the log
@@ -1844,9 +1852,18 @@ async function wizardExecuteDeletion() {
                         if (summary.ObservationSet) addLog('  - Orphan observation sets: ' + summary.ObservationSet);
                         if (summary.NodeShape) addLog('  - Orphan node shapes: ' + summary.NodeShape);
                         if (summary.PropertyShape) addLog('  - Orphan property shapes: ' + summary.PropertyShape);
-                        addLog('  Total: ' + totalCount + ' orphan triples');
+                        addLog('  Total orphan entities: ' + totalCount);
+
+                        // Show shape-specific details if available
+                        if (shapes.orphanShapeCount > 0) {
+                            addLog('');
+                            addLog('Orphan shape details (comprehensive analysis):');
+                            addLog('  - Orphan SHACL shapes: ' + shapes.orphanShapeCount);
+                            addLog('  - Total triples to clean (shapes + property shapes + RDF lists): ' + shapes.orphanShapeTriples);
+                        }
+
                         addLog('');
-                        addLog('Use the buttons below to clean up orphans or skip.');
+                        addLog('Use the buttons below to preview, clean up, or skip.');
 
                         // Show the orphan cleanup buttons
                         const orphanActions = document.getElementById('orphan-cleanup-actions');
@@ -1862,31 +1879,71 @@ async function wizardExecuteDeletion() {
                             orphanActions.classList.add('hidden');
                         }
 
-                        if (userChoice === 'cleanup') {
+                        if (userChoice === 'preview') {
+                            // User chose to preview first - fetch the CONSTRUCT preview
                             addLog('');
-                            addLog('Cleaning up orphan triples...');
-                            const cleanupResponse = await fetch('/api/orphans/cleanup', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    ...config,
-                                    graphUri: state.wizardGraph
-                                })
-                            });
+                            addLog('Fetching orphan shape triple preview...');
+                            try {
+                                const previewResponse = await fetch('/api/orphans/shapes/preview', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        ...config,
+                                        graphUri: state.wizardGraph
+                                    })
+                                });
 
-                            if (cleanupResponse.ok) {
-                                const cleanupData = await cleanupResponse.json();
-                                const removed = cleanupData.removed || {};
-                                const totalRemoved = cleanupData.totalRemoved || 0;
-                                addLog('Orphan cleanup completed:');
-                                for (const [type, count] of Object.entries(removed)) {
-                                    if (count > 0) addLog('  - Removed ' + count + ' ' + type);
+                                if (previewResponse.ok) {
+                                    const previewData = await previewResponse.json();
+                                    addLog('Preview: ' + previewData.tripleCount + ' triples would be deleted from orphan shapes.');
+
+                                    // Show first few triples as sample
+                                    if (previewData.triples) {
+                                        const lines = previewData.triples.split('\n').filter(function(l) { return l.trim(); });
+                                        const sampleSize = Math.min(lines.length, 10);
+                                        if (sampleSize > 0) {
+                                            addLog('Sample triples (first ' + sampleSize + ' of ' + lines.length + '):');
+                                            for (var pi = 0; pi < sampleSize; pi++) {
+                                                addLog('  ' + lines[pi]);
+                                            }
+                                            if (lines.length > sampleSize) {
+                                                addLog('  ... and ' + (lines.length - sampleSize) + ' more triples');
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    addLog('WARNING: Preview failed - continuing to cleanup decision.');
                                 }
-                                addLog('  Total removed: ' + totalRemoved + ' orphan triples');
-                            } else {
-                                const cleanupError = await cleanupResponse.json();
-                                addLog('WARNING: Orphan cleanup failed - ' + (cleanupError.error || 'Unknown error'));
+                            } catch (previewError) {
+                                addLog('WARNING: Preview error - ' + previewError.message);
                             }
+
+                            addLog('');
+                            addLog('Proceed with cleanup? Use the buttons below.');
+
+                            // Show cleanup buttons again for final decision
+                            if (orphanActions) {
+                                orphanActions.classList.remove('hidden');
+                                // Hide preview button since we already previewed
+                                var previewBtn = document.getElementById('btn-preview-orphans');
+                                if (previewBtn) previewBtn.classList.add('hidden');
+                            }
+
+                            const finalChoice = await waitForOrphanCleanupDecision();
+
+                            if (orphanActions) {
+                                orphanActions.classList.add('hidden');
+                                // Restore preview button visibility for next run
+                                if (previewBtn) previewBtn.classList.remove('hidden');
+                            }
+
+                            if (finalChoice === 'cleanup') {
+                                await performOrphanCleanup(config, addLog);
+                            } else {
+                                addLog('Orphan cleanup skipped by user after preview.');
+                            }
+                        } else if (userChoice === 'cleanup') {
+                            await performOrphanCleanup(config, addLog);
                         } else {
                             addLog('Orphan cleanup skipped by user.');
                         }
@@ -1934,22 +1991,92 @@ function waitForOrphanCleanupDecision() {
     return new Promise((resolve) => {
         const cleanupBtn = document.getElementById('btn-cleanup-orphans');
         const skipBtn = document.getElementById('btn-skip-orphan-cleanup');
+        const previewBtn = document.getElementById('btn-preview-orphans');
+
+        function removeAllListeners() {
+            if (cleanupBtn) cleanupBtn.removeEventListener('click', onCleanup);
+            if (skipBtn) skipBtn.removeEventListener('click', onSkip);
+            if (previewBtn) previewBtn.removeEventListener('click', onPreview);
+        }
 
         function onCleanup() {
-            cleanupBtn.removeEventListener('click', onCleanup);
-            skipBtn.removeEventListener('click', onSkip);
+            removeAllListeners();
             resolve('cleanup');
         }
 
         function onSkip() {
-            cleanupBtn.removeEventListener('click', onCleanup);
-            skipBtn.removeEventListener('click', onSkip);
+            removeAllListeners();
             resolve('skip');
+        }
+
+        function onPreview() {
+            removeAllListeners();
+            resolve('preview');
         }
 
         if (cleanupBtn) cleanupBtn.addEventListener('click', onCleanup);
         if (skipBtn) skipBtn.addEventListener('click', onSkip);
+        if (previewBtn) previewBtn.addEventListener('click', onPreview);
     });
+}
+
+/**
+ * Performs the actual orphan cleanup: calls the cleanup API, logs results,
+ * runs verification via shape count, and stores results in state.
+ */
+async function performOrphanCleanup(config, addLog) {
+    addLog('');
+    addLog('Cleaning up orphan triples (observation sets + SHACL shapes)...');
+    try {
+        const cleanupResponse = await fetch('/api/orphans/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...config,
+                graphUri: state.wizardGraph
+            })
+        });
+
+        if (cleanupResponse.ok) {
+            const cleanupData = await cleanupResponse.json();
+            const removed = cleanupData.removed || {};
+            const totalRemoved = cleanupData.totalRemoved || 0;
+            const verification = cleanupData.verification || {};
+
+            addLog('Orphan cleanup completed:');
+            for (const [type, count] of Object.entries(removed)) {
+                if (count > 0) addLog('  - Removed ' + count + ' ' + type);
+            }
+            addLog('  Total removed: ' + totalRemoved + ' orphan triples');
+
+            // Show shape-specific verification results
+            if (verification.shapesRemoved !== undefined) {
+                addLog('');
+                addLog('Shape cleanup verification:');
+                addLog('  - Shapes removed: ' + verification.shapesRemoved);
+                addLog('  - Shape triples cleaned: ' + verification.shapeTriplesCleaned);
+                addLog('  - Remaining orphan shapes: ' + verification.remainingOrphanShapes);
+                addLog('  - Remaining orphan shape triples: ' + verification.remainingOrphanShapeTriples);
+
+                if (verification.remainingOrphanShapes === 0) {
+                    addLog('  Verification: PASSED - all orphan shapes cleaned successfully.');
+                } else {
+                    addLog('  Verification: WARNING - ' + verification.remainingOrphanShapes + ' orphan shapes still remain.');
+                    addLog('  This may require manual review in the Query Editor.');
+                }
+            }
+
+            // Store results in state for summary
+            state.deletionResults.orphanCleanupPerformed = true;
+            state.deletionResults.orphanShapesCleaned = verification.shapesRemoved || 0;
+            state.deletionResults.orphanShapeTriplesCleaned = verification.shapeTriplesCleaned || totalRemoved;
+        } else {
+            const cleanupError = await cleanupResponse.json();
+            addLog('WARNING: Orphan cleanup failed - ' + (cleanupError.error || 'Unknown error'));
+        }
+    } catch (cleanupError) {
+        addLog('WARNING: Orphan cleanup error - ' + cleanupError.message);
+    }
 }
 
 function updateDeletionProgress(step, current, total) {
@@ -1984,7 +2111,15 @@ function renderWizardSummary(isDryRun = false) {
             { value: state.deletionResults.deletedCubes.length, label: 'Versions Deleted', className: 'text-danger' },
             { value: state.deletionResults.keptCubes.length, label: 'Versions Preserved', className: 'text-success' },
             { value: state.deletionResults.totalTriplesDeleted.toLocaleString(), label: 'Triples Removed', className: '' },
-            { value: state.deletionResults.backupIds.length, label: 'Backups Created', className: '' }
+            { value: state.deletionResults.backupIds.length, label: 'Backups Created', className: '' },
+            { value: state.deletionResults.orphanCleanupPerformed
+                ? state.deletionResults.orphanShapesCleaned
+                : 'N/A',
+              label: 'Orphan Shapes Cleaned', className: state.deletionResults.orphanCleanupPerformed ? 'text-success' : '' },
+            { value: state.deletionResults.orphanCleanupPerformed
+                ? state.deletionResults.orphanShapeTriplesCleaned.toLocaleString()
+                : 'Skipped',
+              label: 'Orphan Triples Removed', className: '' }
         ];
 
         stats.forEach(stat => {
@@ -2037,7 +2172,12 @@ function exportDeletionReport() {
         deletedCubes: state.deletionResults.deletedCubes,
         keptCubes: state.deletionResults.keptCubes,
         totalTriplesDeleted: state.deletionResults.totalTriplesDeleted,
-        backupIds: state.deletionResults.backupIds
+        backupIds: state.deletionResults.backupIds,
+        orphanCleanup: {
+            performed: state.deletionResults.orphanCleanupPerformed,
+            shapesCleaned: state.deletionResults.orphanShapesCleaned,
+            shapeTriplesCleaned: state.deletionResults.orphanShapeTriplesCleaned
+        }
     };
 
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
@@ -2174,6 +2314,18 @@ function getQueryTemplates(graphUri, cubeUri, triplestoreType = 'fuseki') {
         'delete-orphans': {
             type: 'update',
             query: 'PREFIX cube: <https://cube.link/>\n\n# Delete orphan observations\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?obs ?p ?o\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    ?obs a cube:Observation .\n    ?obs ?p ?o .\n    FILTER NOT EXISTS { ?set cube:observation ?obs }\n  }\n}'
+        },
+        'count-orphan-shapes': {
+            type: 'select',
+            query: 'PREFIX cube: <https://cube.link/>\nPREFIX sh: <http://www.w3.org/ns/shacl#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n\n# Query 14: Count orphan shapes - impact assessment\nSELECT\n  (COUNT(DISTINCT ?orphanShape) AS ?orphanShapeCount)\n  (COUNT(DISTINCT ?triple) AS ?totalOrphanTriples)\nWHERE {\n  GRAPH <' + graphUri + '> {\n    ?orphanShape a sh:NodeShape .\n    FILTER NOT EXISTS {\n      ?anyCube cube:observationConstraint ?orphanShape .\n      ?anyCube a cube:Cube .\n    }\n\n    {\n      ?orphanShape ?sp ?so .\n      BIND(CONCAT(STR(?orphanShape), "|", STR(?sp), "|", STR(?so)) AS ?triple)\n    }\n    UNION\n    {\n      ?inS ?inP ?orphanShape .\n      BIND(CONCAT(STR(?inS), "|", STR(?inP), "|", STR(?orphanShape)) AS ?triple)\n    }\n    UNION\n    {\n      ?orphanShape sh:property ?ps .\n      ?ps ?psp ?pso .\n      BIND(CONCAT(STR(?ps), "|", STR(?psp), "|", STR(?pso)) AS ?triple)\n    }\n    UNION\n    {\n      ?orphanShape sh:property ?ps .\n      ?ps sh:in ?list .\n      ?list rdf:rest*/rdf:first ?item .\n      ?list ?lp ?lo .\n      BIND(CONCAT(STR(?list), "|", STR(?lp), "|", STR(?lo)) AS ?triple)\n    }\n  }\n}'
+        },
+        'find-orphan-shapes': {
+            type: 'select',
+            query: 'PREFIX cube: <https://cube.link/>\nPREFIX sh: <http://www.w3.org/ns/shacl#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX schema: <http://schema.org/>\n\n# Query 11: Find individual orphan shapes with details\nSELECT\n  ?shape\n  ?shapeType\n  (COUNT(DISTINCT ?propShape) AS ?propertyShapeCount)\n  (COUNT(DISTINCT ?allTriple) AS ?estimatedTriples)\nWHERE {\n  GRAPH <' + graphUri + '> {\n    ?shape a sh:NodeShape .\n    FILTER NOT EXISTS {\n      ?anyCube cube:observationConstraint ?shape .\n      ?anyCube a cube:Cube .\n    }\n    OPTIONAL { ?shape rdf:type ?shapeType }\n    OPTIONAL { ?shape sh:property ?propShape }\n    OPTIONAL {\n      {\n        ?shape ?sp ?so .\n        BIND(CONCAT(STR(?shape), "|", STR(?sp), "|", STR(?so)) AS ?allTriple)\n      }\n      UNION\n      {\n        ?shape sh:property ?ps .\n        ?ps ?psp ?pso .\n        BIND(CONCAT(STR(?ps), "|", STR(?psp), "|", STR(?pso)) AS ?allTriple)\n      }\n    }\n  }\n}\nGROUP BY ?shape ?shapeType\nORDER BY ?shape'
+        },
+        'delete-orphan-shapes': {
+            type: 'update',
+            query: 'PREFIX cube: <https://cube.link/>\nPREFIX sh: <http://www.w3.org/ns/shacl#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n\n# Query 13: Delete orphan shapes (comprehensive)\n# WARNING: This is a destructive operation!\nDELETE {\n  GRAPH <' + graphUri + '> {\n    ?s ?p ?o .\n  }\n}\nWHERE {\n  GRAPH <' + graphUri + '> {\n    ?orphanShape a sh:NodeShape .\n    FILTER NOT EXISTS {\n      ?anyCube cube:observationConstraint ?orphanShape .\n      ?anyCube a cube:Cube .\n    }\n\n    {\n      ?orphanShape ?p ?o .\n      BIND(?orphanShape AS ?s)\n    }\n    UNION\n    {\n      ?s ?p ?orphanShape .\n      BIND(?orphanShape AS ?o)\n    }\n    UNION\n    {\n      ?orphanShape sh:property ?propShape .\n      ?propShape ?p ?o .\n      BIND(?propShape AS ?s)\n    }\n    UNION\n    {\n      ?orphanShape sh:property ?propShape .\n      ?propShape sh:in ?list .\n      ?list rdf:rest*/rdf:first ?item .\n      ?list ?p ?o .\n      BIND(?list AS ?s)\n    }\n  }\n}'
         }
     };
 

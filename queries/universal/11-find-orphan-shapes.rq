@@ -1,0 +1,58 @@
+# Query 11: Find orphan shapes in a graph
+# PARAMETER: Replace GRAPH_URI with the target graph
+# Example: https://lindas.admin.ch/sfoe/cube
+#
+# An orphan shape is a SHACL NodeShape that exists in the graph but is NOT
+# referenced by any cube via cube:observationConstraint.
+# This typically happens after cube versions are deleted.
+#
+# Purpose: Discovery - identify orphan shapes before cleanup
+# Safety: This is a read-only SELECT query, no data is modified.
+
+PREFIX cube: <https://cube.link/>
+PREFIX sh: <http://www.w3.org/ns/shacl#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT
+  ?shape
+  ?shapeType
+  (COUNT(DISTINCT ?propShape) AS ?propertyShapeCount)
+  (COUNT(DISTINCT ?allTriple) AS ?estimatedTriples)
+WHERE {
+  GRAPH <GRAPH_URI> {
+    ?shape a sh:NodeShape .
+
+    # Exclude shapes that ARE referenced by a remaining cube
+    FILTER NOT EXISTS {
+      ?anyCube cube:observationConstraint ?shape .
+      ?anyCube a cube:Cube .
+    }
+
+    OPTIONAL { ?shape rdf:type ?shapeType }
+    OPTIONAL { ?shape sh:property ?propShape }
+
+    # Count all reachable triples
+    OPTIONAL {
+      {
+        ?shape ?sp ?so .
+        BIND(CONCAT(STR(?shape), "|", STR(?sp), "|", STR(?so)) AS ?allTriple)
+      }
+      UNION
+      {
+        ?shape sh:property ?ps .
+        ?ps ?psp ?pso .
+        BIND(CONCAT(STR(?ps), "|", STR(?psp), "|", STR(?pso)) AS ?allTriple)
+      }
+      UNION
+      {
+        ?shape sh:property ?ps .
+        ?ps sh:in ?list .
+        ?list rdf:rest*/rdf:first ?item .
+        ?list ?lp ?lo .
+        BIND(CONCAT(STR(?list), "|", STR(?lp), "|", STR(?lo)) AS ?allTriple)
+      }
+    }
+  }
+}
+GROUP BY ?shape ?shapeType
+ORDER BY ?shape
